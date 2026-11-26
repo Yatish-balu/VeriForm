@@ -1,14 +1,36 @@
 """
-VeriForm — Gemini Vision Extraction Service  (STUB for Yatish)
-Bhanuprasad has defined the ExtractedForm dataclass that the DB layer expects.
-Yatish implements the actual Gemini Vision call in this file.
+VeriForm — Gemini Vision Extraction Service
+Implements Gemini 2.5 Flash vision extraction for B-form attendance sheets.
+
+PDF uploads are passed directly to Gemini as application/pdf.
+Raster images (JPEG/PNG) are EXIF-corrected, resized to ≤2000 px, and
+blur-scored before being forwarded.
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import List, Optional
+
+from google import genai
+from google.genai import types as genai_types
+
+from app.core.config import settings
+from app.services.preprocess import preprocess_image
+
+logger = logging.getLogger(__name__)
+
+_MODELS            = ("gemini-3.5-flash-lite", "gemini-3.8-flash")
+_RETRIES_PER_MODEL = 2   # 1 initial attempt + 1 retry on 503/timeout
+_PROMPT_PATH  = Path(__file__).parent / "prompts" / "extraction_prompt.txt"
+_PDF_MIME     = "application/pdf"
+_RASTER_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -50,22 +72,150 @@ class ExtractedForm:
 
 
 # ─────────────────────────────────────────────────────────────
-# Main extraction function  — IMPLEMENT THIS (Yatish)
+# Internal helpers
 # ─────────────────────────────────────────────────────────────
+
+def _build_image_part(image_bytes: bytes, content_type: str) -> genai_types.Part:
+    """
+    For PDFs → pass raw bytes directly as application/pdf.
+    For raster images → run EXIF correction + resize + blur check first,
+    then wrap the resulting JPEG bytes as a Part.
+    """
+    if content_type == _PDF_MIME:
+        return genai_types.Part.from_bytes(data=image_bytes, mime_type=_PDF_MIME)
+
+    # Raster path — preprocess before sending
+    prep = preprocess_image(image_bytes)
+    if prep.blur_score < 100:
+        logger.warning(
+            "Blurry image detected (Laplacian=%.1f) — extraction accuracy may be reduced.",
+            prep.blur_score,
+        )
+    return genai_types.Part.from_bytes(data=prep.image_bytes, mime_type="image/jpeg")
+
+
+def _parse_response(raw: str) -> ExtractedForm:
+    """
+    Strip accidental markdown fences, parse JSON, and build
+    the ExtractedForm dataclass hierarchy.
+    Raises json.JSONDecodeError / KeyError on malformed output.
+    """
+    # Defensively strip ```json ... ``` fences
+    cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", raw.strip())
+    cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+
+    data = json.loads(cleaned)
+
+    sessions = [
+        ExtractedSession(
+            exam_date=date.fromisoformat(s["exam_date"]),
+            subject_code=s["subject_code"],
+        )
+        for s in data.get("sessions", [])
+    ]
+
+    students: List[ExtractedStudent] = []
+    for st in data.get("students", []):
+        cells = [
+            ExtractedCell(
+                subject_code=c["subject_code"],
+                status=c["status"],           # 'present' | 'absent' | 'unclear'
+                confidence=float(c["confidence"]),
+                ai_note=c.get("ai_note"),
+            )
+            for c in st.get("cells", [])
+        ]
+        students.append(
+            ExtractedStudent(
+                sl_no=int(st["sl_no"]),
+                usn=st["usn"],
+                name=st["name"],
+                cells=cells,
+            )
+        )
+
+    return ExtractedForm(
+        room_no=data["room_no"],
+        exam_name=data["exam_name"],
+        semester=data.get("semester", ""),
+        department=data.get("department", ""),
+        footer_present_raw=data.get("footer_present_raw"),
+        footer_absent_raw=data.get("footer_absent_raw"),
+        sessions=sessions,
+        students=students,
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# Main extraction function
+# ─────────────────────────────────────────────────────────────
+
+def _is_retryable(exc: Exception) -> bool:
+    """Return True for 503 / unavailable or timeout errors."""
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    msg = str(exc).lower()
+    return any(tok in msg for tok in ("503", "unavailable", "timeout", "timed out"))
+
 
 async def extract_form(image_bytes: bytes, content_type: str) -> ExtractedForm:
     """
-    Call Gemini Vision API with the B-form image and return structured data.
-
-    TODO (Yatish):
-      1. Convert image_bytes to base64 / Part for the Gemini SDK.
-      2. Build the extraction prompt (see services/prompts/extraction_prompt.txt).
-      3. Call client.models.generate_content() with low temperature.
-      4. Parse the returned JSON into ExtractedForm.
-      5. Handle retries and split-page logic for long sheets.
+    1. Pre-process image (EXIF, resize, blur score) for raster uploads.
+       PDFs are forwarded as-is.
+    2. Build Gemini Vision request with the B-form extraction prompt.
+    3. Call Gemini asynchronously (temperature=0, JSON mode, 30s HTTP timeout),
+       iterating through _MODELS with 1 retry per model on 503/timeout.
+    4. Parse the returned JSON into an ExtractedForm dataclass.
     """
-    # ── Placeholder — replace with real Gemini call ──────────
-    raise NotImplementedError(
-        "extract_form() not yet implemented. "
-        "Yatish: implement Gemini Vision extraction here."
+    image_part  = _build_image_part(image_bytes, content_type)
+    prompt_text = _PROMPT_PATH.read_text(encoding="utf-8")
+
+    client = genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        http_options=genai_types.HttpOptions(timeout=30000),
     )
+
+    raw_json: str | None = None
+    last_exc: Exception | None = None
+
+    for model in _MODELS:
+        for attempt in range(1, _RETRIES_PER_MODEL + 1):
+            try:
+                response = await client.aio.models.generate_content(
+                    model=model,
+                    contents=[image_part, prompt_text],
+                    config=genai_types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                    ),
+                )
+                raw_json = response.text
+                logger.debug(
+                    "Gemini raw response (%s, attempt %d): %s",
+                    model, attempt, raw_json[:200],
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "Gemini extraction failed (%s, attempt %d/%d): %s",
+                    model, attempt, _RETRIES_PER_MODEL, exc,
+                )
+                if attempt < _RETRIES_PER_MODEL and _is_retryable(exc):
+                    await asyncio.sleep(1)
+                else:
+                    break
+        if raw_json is not None:
+            break
+    else:
+        raise RuntimeError(
+            f"Gemini extraction failed across models {_MODELS}"
+        ) from last_exc
+
+    try:
+        return _parse_response(raw_json)
+    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        raise RuntimeError(
+            f"Failed to parse Gemini response as ExtractedForm: {exc}\n"
+            f"Raw response: {raw_json[:500]}"
+        ) from exc
