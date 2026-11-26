@@ -1,23 +1,25 @@
 """
-VeriForm — Application Configuration
+VeriForm – Application Configuration
 Loads settings from the .env file via pydantic-settings.
 Author: Bhanuprasad
 """
 
 from __future__ import annotations
+
 from functools import lru_cache
 from typing import List
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # ── Supabase ─────────────────────────────────────────────
+    # ── Supabase ───────────────────────────────────────────────────────────────
     SUPABASE_URL: str
     SUPABASE_ANON_KEY: str
     SUPABASE_SERVICE_ROLE_KEY: str
 
-    # ── PostgreSQL (direct connection for SQLAlchemy) ─────────
+    # ── PostgreSQL (direct connection for SQLAlchemy) ──────────────────────────
     # Format: postgresql+asyncpg://postgres:<password>@<host>:5432/postgres
     DATABASE_URL: str
 
@@ -42,19 +44,31 @@ class Settings(BaseSettings):
                 return "postgresql+asyncpg://" + v[len("postgresql://"):]
         return v
 
-    # ── Gemini API ────────────────────────────────────────────
+    # ── Gemini API ─────────────────────────────────────────────────────────────
     GEMINI_API_KEY: str
 
-    # ── Storage ───────────────────────────────────────────────
+    # ── Storage ────────────────────────────────────────────────────────────────
     STORAGE_BUCKET: str = "bforms"
 
-    # ── AI thresholds ─────────────────────────────────────────
+    # ── AI thresholds ──────────────────────────────────────────────────────────
     CONFIDENCE_THRESHOLD: float = 0.75   # cells below this become doubts
 
-    # ── CORS ──────────────────────────────────────────────────
+    # ── Frontend / CORS ────────────────────────────────────────────────────────
+    # Set FRONTEND_URL in .env for the production frontend origin
+    # (e.g. https://veriform.vercel.app). It is automatically merged into
+    # cors_origins so you never have to edit ALLOWED_ORIGINS in production.
+    FRONTEND_URL: str = "http://localhost:5173"
     ALLOWED_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 
-    # ── App ───────────────────────────────────────────────────
+    @property
+    def cors_origins(self) -> List[str]:
+        """Merged, deduplicated CORS origin list (ALLOWED_ORIGINS + FRONTEND_URL)."""
+        combined = list(self.ALLOWED_ORIGINS)
+        if self.FRONTEND_URL not in combined:
+            combined.append(self.FRONTEND_URL)
+        return combined
+
+    # ── App ────────────────────────────────────────────────────────────────────
     APP_NAME: str = "VeriForm API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
@@ -67,5 +81,5 @@ def get_settings() -> Settings:
     return Settings()
 
 
-# Singleton — import this everywhere
+# Singleton – import this everywhere
 settings: Settings = get_settings()
