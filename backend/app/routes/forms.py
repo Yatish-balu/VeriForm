@@ -14,13 +14,14 @@ import uuid
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.db import service as svc
 from app.db.supabase_client import upload_image
 from app.models.schemas import DoubtOut, FormDetailOut, FormListItem
+from app.services.export import generate_form_pdf
 from app.services.gemini_extraction import extract_form   # Yatish's service
 from app.services.validation import generate_doubts        # Yatish's service
 
@@ -183,3 +184,23 @@ async def list_form_doubts(
     if not form:
         raise HTTPException(status_code=404, detail="Form not found.")
     return await svc.get_doubts(db, form_id, resolved=resolved)
+
+
+# ─────────────────────────────────────────────────────────────
+# GET /api/forms/{id}/export
+# ─────────────────────────────────────────────────────────────
+@router.get("/{form_id}/export")
+async def export_form_pdf(form_id: UUID, db: AsyncSession = Depends(get_db)) -> Response:
+    """Export a form's attendance sheet as a downloadable PDF."""
+    form = await svc.get_form(db, form_id)
+    if not form:
+        raise HTTPException(status_code=404, detail="Form not found.")
+
+    pdf_bytes = generate_form_pdf(form)
+    safe_room = "".join(c if c.isalnum() or c in "-_" else "_" for c in (form.room_no or "unknown"))
+    filename = f"form_b_{safe_room}_{form_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
