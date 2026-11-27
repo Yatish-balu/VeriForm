@@ -163,6 +163,31 @@ def test_ai_note_ab_cross_or_scribble_emits_ab_mark() -> None:
         assert doubt["ai_guess"] == att.status
 
 
+def test_absence_mark_and_unknown_mark_are_reviewed_without_ai_note() -> None:
+    mark_types = ("absence_mark", "unknown", "blank")
+    form = _make_form(
+        students=[
+            ExtractedStudent(
+                sl_no=index,
+                usn=f"1DS21CS{index:03}",
+                name=f"Sample Student {index}",
+                cells=[ExtractedCell("21CS51", "absent", 0.99, mark_type=mark_type)],
+            )
+            for index, mark_type in enumerate(mark_types, 1)
+        ],
+        footer_present_raw="0",
+        footer_absent_raw="3",
+    )
+    attendance = [_make_attendance(sl_no=index, status="absent") for index in range(1, 4)]
+
+    doubts = generate_doubts(form, attendance)
+
+    assert [(doubt["attendance_id"], doubt["type"]) for doubt in doubts] == [
+        (attendance[0].id, "ab_mark"),
+        (attendance[1].id, "unconfirmed_absence"),
+    ]
+
+
 def test_footer_mismatch_emits_footer_mismatch() -> None:
     form = _make_form(
         students=[

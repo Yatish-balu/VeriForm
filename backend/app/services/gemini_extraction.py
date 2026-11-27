@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from google import genai
 from google.genai import types as genai_types
@@ -43,6 +43,7 @@ class ExtractedCell:
     status: str                 # 'present' | 'absent' | 'unclear'
     confidence: float           # 0.0 – 1.0
     ai_note: Optional[str] = None
+    mark_type: Optional[Literal["signature", "absence_mark", "blank", "ambiguous", "unknown"]] = None
 
 
 @dataclass
@@ -122,6 +123,7 @@ def _parse_response(raw: str) -> ExtractedForm:
                 status=c["status"],           # 'present' | 'absent' | 'unclear'
                 confidence=float(c["confidence"]),
                 ai_note=c.get("ai_note"),
+                mark_type=c.get("mark_type") or "unknown",
             )
             for c in st.get("cells", [])
         ]
@@ -170,13 +172,13 @@ async def extract_form(image_bytes: bytes, content_type: str) -> ExtractedForm:
     image_part  = _build_image_part(image_bytes, content_type)
     prompt_text = _PROMPT_PATH.read_text(encoding="utf-8")
 
-    client = genai.Client(
-        api_key=settings.GEMINI_API_KEY,
-        http_options=genai_types.HttpOptions(timeout=30000),
-    )
-
     raw_json: str | None = None
     last_exc: Exception | None = None
+
+    client = genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+        http_options=genai_types.HttpOptions(timeout=30_000),
+    )
 
     for model in _MODELS:
         for attempt in range(1, _RETRIES_PER_MODEL + 1):
@@ -190,32 +192,23 @@ async def extract_form(image_bytes: bytes, content_type: str) -> ExtractedForm:
                     ),
                 )
                 raw_json = response.text
-                logger.debug(
-                    "Gemini raw response (%s, attempt %d): %s",
-                    model, attempt, raw_json[:200],
-                )
                 break
             except Exception as exc:
                 last_exc = exc
                 logger.warning(
                     "Gemini extraction failed (%s, attempt %d/%d): %s",
-                    model, attempt, _RETRIES_PER_MODEL, exc,
+                    model, attempt, _RETRIES_PER_MODEL, type(exc).__name__,
                 )
-                if attempt < _RETRIES_PER_MODEL and _is_retryable(exc):
-                    await asyncio.sleep(1)
-                else:
+                if attempt == _RETRIES_PER_MODEL or not _is_retryable(exc):
                     break
-        if raw_json is not None:
+                await asyncio.sleep(1)
+        if raw_json:
             break
-    else:
-        raise RuntimeError(
-            f"Gemini extraction failed across models {_MODELS}"
-        ) from last_exc
+
+    if not raw_json:
+        raise RuntimeError("Gemini returned no Form-B extraction.") from last_exc
 
     try:
         return _parse_response(raw_json)
     except (json.JSONDecodeError, KeyError, ValueError) as exc:
-        raise RuntimeError(
-            f"Failed to parse Gemini response as ExtractedForm: {exc}\n"
-            f"Raw response: {raw_json[:500]}"
-        ) from exc
+        raise RuntimeError("Failed to parse Gemini's Form-B extraction.") from exc

@@ -6,9 +6,9 @@ Author: Bhanuprasad
 
 from __future__ import annotations
 from datetime import date, datetime
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 
 # ─────────────────────────────────────────────────────────────
@@ -85,8 +85,20 @@ class DoubtOut(BaseModel):
 
 
 class ResolveDoubtIn(BaseModel):
-    resolution:  str = Field(..., description="'present', 'absent', or a custom note")
-    resolved_by: UUID
+    resolution: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = Field(
+        description="'present', 'absent', or a review note."
+    )
+    resolved_by: Optional[UUID] = Field(default=None, description="Defaults to the signed-in reviewer.")
+    attendance_status: Optional[Literal["present", "absent"]] = Field(
+        default=None, description="Attendance correction to apply alongside a review note."
+    )
+
+    @model_validator(mode="after")
+    def check_attendance_decision(self):
+        if self.attendance_status and self.resolution in ("present", "absent"):
+            if self.attendance_status != self.resolution:
+                raise ValueError("The attendance status and resolution must agree.")
+        return self
 
 
 # ─────────────────────────────────────────────────────────────
@@ -130,12 +142,14 @@ class FormListItem(BaseModel):
 # ─────────────────────────────────────────────────────────────
 class SessionSummaryOut(BaseModel):
     session_id:   UUID
+    form_id:      UUID
     exam_date:    date
     subject_code: str
     total:        int
     present:      int
     absent:       int
     unclear:      int
+    verified:     bool
     percentage:   float
     present_students: List[StudentOut] = []
     absent_students:  List[StudentOut] = []
@@ -148,11 +162,14 @@ class RoomSummaryOut(BaseModel):
 
 class BranchSessionSummary(BaseModel):
     session_id:   UUID
+    session_ids:  List[UUID]
     exam_date:    date
     subject_code: str
     total:        int
     present:      int
     absent:       int
+    unclear:      int
+    verified:     bool
     percentage:   float
 
 
@@ -162,11 +179,11 @@ class BranchSummaryOut(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────
-# Chat  (stub — Mahadev's ownership)
+# Chat
 # ─────────────────────────────────────────────────────────────
 class ChatIn(BaseModel):
     user_id: UUID
-    message: str
+    message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 class ChatOut(BaseModel):

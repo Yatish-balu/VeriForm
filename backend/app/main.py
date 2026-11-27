@@ -5,11 +5,24 @@ Author: Bhanuprasad (wiring) | Team: Group 7
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.db.supabase_client import close_supabase
 from app.routes import forms, doubts, summary, chat
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        close_supabase()
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -20,6 +33,7 @@ app = FastAPI(
     ),
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # ── CORS ─────────────────────────────────────────────────────

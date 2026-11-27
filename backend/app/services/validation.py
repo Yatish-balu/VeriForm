@@ -136,12 +136,21 @@ def generate_doubts(
                     "ai_guess": cell.status,
                 })
 
-            # 2. ai_note mentions "Ab", cross, or scribble
-            if cell.ai_note and _AB_NOTE_RE.search(cell.ai_note):
+            # Keep legacy notes usable while new readings supply a structured mark.
+            if cell.mark_type in ("absence_mark", "ambiguous") or (
+                cell.ai_note and _AB_NOTE_RE.search(cell.ai_note)
+            ):
                 doubts.append({
                     "attendance_id": att_id,
                     "type": "ab_mark",
                     "message": "Marked absent or unclear, please confirm",
+                    "ai_guess": cell.status,
+                })
+            elif cell.status == "absent" and cell.mark_type not in (None, "blank"):
+                doubts.append({
+                    "attendance_id": att_id,
+                    "type": "unconfirmed_absence",
+                    "message": "Check whether this cell is blank or has a written absence mark.",
                     "ai_guess": cell.status,
                 })
 
