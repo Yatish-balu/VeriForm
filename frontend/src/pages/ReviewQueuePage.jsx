@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { Check, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { resolveDoubtDecision, finalizeFormRequest } from '../api/client';
+import { Check, CheckCircle2, AlertTriangle, AlertCircle } from 'lucide-react';
+import { fetchFormsList, finalizeFormRequest, resolveDoubtDecision } from '../api/client';
 
 export default function ReviewQueuePage({ doubts, setDoubts, onMarkFormFinal }) {
   const [filter, setFilter] = useState('open');
   const [busyId, setBusyId] = useState(null);
+  const [finalizing, setFinalizing] = useState(false);
   const [finalizeMsg, setFinalizeMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
   const openDoubts = doubts.filter((d) => !d.resolved);
   const resolvedDoubts = doubts.filter((d) => d.resolved);
@@ -14,23 +16,59 @@ export default function ReviewQueuePage({ doubts, setDoubts, onMarkFormFinal }) 
   const handleResolve = async (doubtId, resolution) => {
     setBusyId(doubtId);
     setFinalizeMsg('');
+    setErrorMsg('');
     try {
-      await resolveDoubtDecision(doubtId, resolution);
+      const res = await resolveDoubtDecision(doubtId, resolution);
+      const updated = res?.data || {};
       setDoubts((prev) =>
         prev.map((d) =>
-          d.id === doubtId ? { ...d, resolved: true, resolution } : d
+          d.id === doubtId
+            ? { ...d, resolved: true, resolution: updated.resolution || resolution }
+            : d
         )
       );
+    } catch (err) {
+      setErrorMsg(err?.message || 'Unable to resolve doubt.');
     } finally {
       setBusyId(null);
     }
   };
 
   const handleFinalizeAll = async () => {
-    if (openDoubts.length > 0) return;
-    await finalizeFormRequest('11111111-1111-1111-1111-111111111111');
-    onMarkFormFinal?.('11111111-1111-1111-1111-111111111111');
-    setFinalizeMsg('All queued forms have zero open doubts and are marked Final.');
+    if (openDoubts.length > 0 || finalizing) return;
+    setFinalizing(true);
+    setFinalizeMsg('');
+    setErrorMsg('');
+    try {
+      const formIds = new Set(
+        doubts.map((d) => d.form_id).filter(Boolean)
+      );
+      try {
+        const formsRes = await fetchFormsList();
+        for (const f of formsRes?.data || []) {
+          if (f.id && f.status !== 'final' && (f.open_doubts ?? 0) === 0) {
+            formIds.add(f.id);
+          }
+        }
+      } catch {
+        // Keep formIds collected from doubts if form list lookup fails
+      }
+
+      if (formIds.size === 0) {
+        setErrorMsg('No pending forms found to finalize.');
+        return;
+      }
+
+      for (const formId of formIds) {
+        await finalizeFormRequest(formId);
+        onMarkFormFinal?.(formId);
+      }
+      setFinalizeMsg('All queued forms have zero open doubts and are marked Final.');
+    } catch (err) {
+      setErrorMsg(err?.message || 'Unable to finalize verified forms.');
+    } finally {
+      setFinalizing(false);
+    }
   };
 
   return (
@@ -65,14 +103,21 @@ export default function ReviewQueuePage({ doubts, setDoubts, onMarkFormFinal }) 
 
           <button
             type="button"
-            disabled={openDoubts.length > 0}
+            disabled={openDoubts.length > 0 || finalizing}
             onClick={handleFinalizeAll}
             className="px-4 py-2 rounded-[10px] bg-[#293F2D] text-white text-[12.5px] font-semibold hover:bg-[#203324] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            Finalize Verified Forms
+            {finalizing ? 'Finalizing…' : 'Finalize Verified Forms'}
           </button>
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="mt-4 bg-[#F9E4E4] border border-[#F1C5C5] rounded-[12px] px-4 py-3 text-[12.5px] text-[#991B1B] flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
       {finalizeMsg && (
         <div className="mt-4 bg-[#EAF2E8] border border-[#C6DFC2] rounded-[12px] px-4 py-3 text-[12.5px] text-[#166534] flex items-center gap-2">
@@ -127,10 +172,10 @@ export default function ReviewQueuePage({ doubts, setDoubts, onMarkFormFinal }) 
                     {d.room_no}
                   </span>
                   <span className="font-mono-tech text-[12px] font-medium text-[#111827]">
-                    {d.usn}
+                    {d.usn || '—'}
                   </span>
                   <span className="text-[13px] font-semibold text-[#111827]">
-                    {d.student_name}
+                    {d.student_name || 'Form-level check'}
                   </span>
                   <span
                     className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${
@@ -139,11 +184,13 @@ export default function ReviewQueuePage({ doubts, setDoubts, onMarkFormFinal }) 
                         : 'bg-[#FBEFD9] text-[#92400E]'
                     }`}
                   >
-                    {d.resolved ? `Resolved: ${d.resolution}` : d.type.replace(/_/g, ' ')}
+                    {d.resolved
+                      ? `Resolved: ${d.resolution}`
+                      : (d.type || 'review').replace(/_/g, ' ')}
                   </span>
                 </div>
                 <p className="text-[13px] text-[#4B5563]">{d.message}</p>
-                {d.confidence && (
+                {d.confidence != null && (
                   <p className="text-[11.5px] text-[#64748B] font-mono-tech">
                     AI confidence: {Math.round(d.confidence * 100)}% · Initial guess:{' '}
                     {d.ai_guess || 'none'}

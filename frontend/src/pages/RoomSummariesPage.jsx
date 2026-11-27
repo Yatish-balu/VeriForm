@@ -1,18 +1,60 @@
 import React, { useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
-import { fetchRoomSummary } from '../api/client';
+import { fetchFormsList, fetchRoomSummary } from '../api/client';
 
-const ROOMS = ['CDS 105', 'CDS 108', 'CSE 204'];
+const FALLBACK_ROOMS = ['CDS 105', 'CDS 108', 'CSE 204'];
 
 export default function RoomSummariesPage() {
-  const [selectedRoom, setSelectedRoom] = useState(ROOMS[0]);
+  const [rooms, setRooms] = useState(FALLBACK_ROOMS);
+  const [selectedRoom, setSelectedRoom] = useState(FALLBACK_ROOMS[0]);
   const [summary, setSummary] = useState(null);
+  const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     let active = true;
-    fetchRoomSummary(selectedRoom).then((res) => {
-      if (active) setSummary(res.data);
-    });
+    fetchFormsList()
+      .then((res) => {
+        if (!active) return;
+        if (res.isMock) {
+          setRooms(FALLBACK_ROOMS);
+          return;
+        }
+        const liveRooms = [
+          ...new Set((res.data || []).map((f) => f.room_no).filter(Boolean)),
+        ];
+        setRooms(liveRooms);
+        if (liveRooms.length > 0 && !liveRooms.includes(selectedRoom)) {
+          setSelectedRoom(liveRooms[0]);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setRooms([]);
+          setErrorMsg(err?.message || 'Unable to load available rooms.');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRoom) {
+      setSummary({ room_no: '', sessions: [] });
+      return;
+    }
+    let active = true;
+    setErrorMsg('');
+    fetchRoomSummary(selectedRoom)
+      .then((res) => {
+        if (active) setSummary(res.data);
+      })
+      .catch((err) => {
+        if (active) {
+          setSummary({ room_no: selectedRoom, sessions: [] });
+          setErrorMsg(err?.message || `Unable to load summary for room ${selectedRoom}.`);
+        }
+      });
     return () => {
       active = false;
     };
@@ -60,8 +102,8 @@ export default function RoomSummariesPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {ROOMS.map((room) => (
+        <div className="flex flex-wrap items-center gap-2">
+          {rooms.map((room) => (
             <button
               key={room}
               type="button"
@@ -77,6 +119,12 @@ export default function RoomSummariesPage() {
           ))}
         </div>
       </div>
+
+      {errorMsg && (
+        <div className="mt-5 bg-[#F9E4E4] border border-[#F1C5C5] rounded-[12px] px-4 py-3 text-[12.5px] text-[#991B1B]">
+          {errorMsg}
+        </div>
+      )}
 
       <div className="mt-6 space-y-5">
         {(summary?.sessions || []).map((session) => (
