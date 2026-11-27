@@ -6,7 +6,6 @@ import PreFlightCard from '../components/PreFlightCard';
 import ReadyActionCard from '../components/ReadyActionCard';
 import { exportFormPdf, extractFormAttendance } from '../api/client';
 import { analyzeUploadedDocument, formatFileSize } from '../utils/imageQuality';
-import { SAMPLE_FORM_DOCUMENT } from '../data/mockData';
 
 export default function UploadBFormPage({
   documentData,
@@ -69,7 +68,6 @@ export default function UploadBFormPage({
 
     const analysis = await analyzeUploadedDocument(file);
     setDocumentData({
-      ...SAMPLE_FORM_DOCUMENT,
       id: `upload-${Date.now()}`,
       fileName: file.name,
       fileSizeLabel: formatFileSize(file.size),
@@ -78,6 +76,7 @@ export default function UploadBFormPage({
       isSample: false,
       qualityChecks: analysis.qualityChecks,
       warningBanner: analysis.warningBanner,
+      students: [],
     });
   };
 
@@ -87,7 +86,7 @@ export default function UploadBFormPage({
     }
     setUploadedFile(null);
     setUploadedPreviewUrl(null);
-    setDocumentData(SAMPLE_FORM_DOCUMENT);
+    setDocumentData(null);
     setZoom(1);
     setRotation(0);
     setWorkflowStep(1);
@@ -96,6 +95,10 @@ export default function UploadBFormPage({
   };
 
   const handleExtract = async () => {
+    if (!uploadedFile) {
+      setExtractError('Please select or drop a Form-B sheet (JPG, PNG, or PDF) first.');
+      return;
+    }
     setIsExtracting(true);
     setExtractError('');
     try {
@@ -105,7 +108,7 @@ export default function UploadBFormPage({
       });
       setExtractionResult(result);
       setWorkflowStep(2);
-      onAddHistoryRecord?.(result.form, documentData.fileName);
+      onAddHistoryRecord?.(result.form, documentData?.fileName || uploadedFile.name);
     } catch (err) {
       setExtractError(err?.message || 'Unable to extract attendance from this sheet.');
     } finally {
@@ -234,7 +237,7 @@ export default function UploadBFormPage({
           />
 
           <div className="flex flex-col gap-5">
-            <PreFlightCard qualityChecks={documentData.qualityChecks} />
+            <PreFlightCard qualityChecks={documentData?.qualityChecks} />
             <ReadyActionCard isExtracting={isExtracting} onExtract={handleExtract} />
           </div>
         </div>

@@ -93,7 +93,7 @@ export default function AskAIDrawer({
               <p className="text-[11.5px] text-[#64748B]">
                 {backendStatus?.connected
                   ? 'Grounded Gemini attendance assistant'
-                  : 'Demo mode · local sheet context'}
+                  : 'Offline · connect backend'}
               </p>
             </div>
           </div>
