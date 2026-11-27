@@ -5,8 +5,13 @@ Author: Bhanuprasad
 """
 
 from __future__ import annotations
+
 from functools import lru_cache
-from supabase import create_client, Client
+from urllib.parse import unquote, urlsplit
+from uuid import UUID
+
+from httpx import Client as HttpClient
+from supabase import Client, ClientOptions, create_client
 from app.core.config import settings
 
 
@@ -16,30 +21,58 @@ def get_supabase() -> Client:
     Returns a Supabase client initialised with the SERVICE ROLE KEY.
     The service-role key bypasses RLS — keep it backend-only, never expose to frontend.
     """
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+    http_client = HttpClient(timeout=20, follow_redirects=True, http2=True)
+    try:
+        return create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY,
+            options=ClientOptions(httpx_client=http_client),
+        )
+    except Exception:
+        http_client.close()
+        raise
+
+
+def close_supabase() -> None:
+    """Release the shared connection pool at application shutdown."""
+    if get_supabase.cache_info().currsize:
+        http_client = get_supabase().options.httpx_client
+        if http_client is not None:
+            http_client.close()
+        get_supabase.cache_clear()
 
 
 # ─────────────────────────────────────────────────────────────
 # Storage helpers
 # ─────────────────────────────────────────────────────────────
-def upload_image(file_bytes: bytes, filename: str, content_type: str = "image/jpeg") -> str:
-    """
-    Uploads a B-form image to the private 'bforms' storage bucket.
-    Returns the public URL (or signed URL for private buckets).
-    """
-    client = get_supabase()
-    bucket = settings.STORAGE_BUCKET
-    path = f"forms/{filename}"
-
-    client.storage.from_(bucket).upload(
-        path=path,
+def upload_image(file_bytes: bytes, filename: str, content_type: str = "image/jpeg") -> None:
+    """Upload a sheet to the private storage bucket."""
+    get_supabase().storage.from_(settings.STORAGE_BUCKET).upload(
+        path=f"forms/{filename}",
         file=file_bytes,
-        file_options={"content-type": content_type, "upsert": "true"},
+        file_options={"content-type": content_type},
     )
 
-    # For a private bucket, generate a signed URL valid for 1 hour
-    result = client.storage.from_(bucket).create_signed_url(path, expires_in=3600)
-    return result.get("signedURL", "")
+
+def sign_form_image(stored_value: str, form_id: UUID) -> str:
+    """Sign the object key, including keys stored as legacy signed URLs."""
+    prefix = f"/storage/v1/object/sign/{settings.STORAGE_BUCKET}/"
+    parsed = urlsplit(stored_value)
+    path = stored_value
+    if parsed.netloc:
+        if parsed.netloc != urlsplit(settings.SUPABASE_URL).netloc or not parsed.path.startswith(prefix):
+            raise ValueError("Unexpected form image URL.")
+        path = unquote(parsed.path.removeprefix(prefix))
+    if not path.startswith(f"forms/{form_id}.") or "/" in path.removeprefix("forms/"):
+        raise ValueError("Unexpected form image path.")
+
+    result = get_supabase().storage.from_(settings.STORAGE_BUCKET).create_signed_url(
+        path, expires_in=3600
+    )
+    signed_url = result.get("signedURL")
+    if not signed_url:
+        raise ValueError("Storage did not return a signed preview URL.")
+    return signed_url
 
 
 def delete_image(filename: str) -> None:

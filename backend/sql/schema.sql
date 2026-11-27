@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS forms (
     exam_name           TEXT        NOT NULL,
     semester            TEXT        NOT NULL,
     department          TEXT        NOT NULL,
-    image_url           TEXT,                               -- Supabase Storage public URL
+    image_url           TEXT,                               -- private Storage object key
     footer_present_raw  TEXT,                               -- exactly as written on sheet
     footer_absent_raw   TEXT,
     status              TEXT        NOT NULL DEFAULT 'processing'

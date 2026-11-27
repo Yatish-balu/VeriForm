@@ -3,14 +3,19 @@ VeriForm — Backend Tests  (skeleton for Mahadev to fill in)
 Run with:  pytest backend/tests/ -v
 """
 
+from uuid import uuid4
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+
+from app.db.auth import require_user
 from app.main import app
 
 
 @pytest_asyncio.fixture
-async def client():
+async def client(monkeypatch):
+    monkeypatch.setitem(app.dependency_overrides, require_user, uuid4)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
 
@@ -20,6 +25,23 @@ async def test_health(client):
     response = await client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_form_history_requires_authentication():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/forms")
+    assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.asyncio
+async def test_chat_rejects_a_different_user_id(client):
+    response = await client.post(
+        "/api/chat",
+        json={"user_id": str(uuid4()), "message": "How many students were absent in room 101?"},
+    )
+    assert response.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -33,8 +55,7 @@ async def test_list_forms_empty(client):
 @pytest.mark.asyncio
 async def test_get_nonexistent_form(client):
     """Should return 404 for a random UUID."""
-    import uuid
-    response = await client.get(f"/api/forms/{uuid.uuid4()}")
+    response = await client.get(f"/api/forms/{uuid4()}")
     assert response.status_code == 404
 
 
