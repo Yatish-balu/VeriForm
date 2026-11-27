@@ -136,48 +136,66 @@ export async function extractFormAttendance({ file, documentData }) {
   }
 }
 
-export async function fetchFormsList() {
+export async function fetchFormsList(signal) {
   try {
-    const res = await apiClient.get('/api/forms');
-    return { isMock: false, data: res.data || [] };
+    const res = await apiClient.get('/api/forms', { signal });
+    return { isMock: false, data: res.data };
   } catch (err) {
-    return { isMock: false, data: [] };
+    throw new Error(getErrorMessage(err, 'Unable to load saved forms.'));
   }
 }
 
-export async function fetchReviewDoubts() {
+export async function fetchReviewDoubts(signal) {
   try {
-    const formsRes = await apiClient.get('/api/forms');
+    const formsRes = await apiClient.get('/api/forms', { signal });
+    const forms = formsRes.data || [];
+    
+    // Concurrently fetch form details in parallel instead of sequential waterfall
+    const targetForms = forms.filter((f) => (f.open_doubts ?? 1) > 0 || f.status !== 'final');
+    const detailResults = await Promise.all(
+      targetForms.map((f) =>
+        apiClient
+          .get(`/api/forms/${f.id}`, { signal })
+          .then((res) => ({ form: f, detail: res.data || {} }))
+          .catch(() => ({ form: f, detail: {} }))
+      )
+    );
+
     const allDoubts = [];
-    for (const f of formsRes.data || []) {
-      const detailRes = await apiClient.get(`/api/forms/${f.id}`);
-      const detail = detailRes.data || {};
+    for (const { form: f, detail } of detailResults) {
       const attendanceById = new Map(
         (detail.attendance || []).map((att) => [att.id, att])
       );
+      const sessionsById = new Map((detail.sessions || []).map((session) => [session.id, session]));
       for (const d of detail.doubts || []) {
         const att = d.attendance_id ? attendanceById.get(d.attendance_id) : null;
+        const session = sessionsById.get(att?.session_id);
         allDoubts.push({
           ...d,
           room_no: detail.room_no || f.room_no,
           exam_name: detail.exam_name || f.exam_name,
-          usn: att?.student?.usn || '—',
-          student_name: att?.student?.name || 'Form-level check',
+          usn: att?.student?.usn,
+          student_name: att?.student?.name,
+          sl_no: att?.sl_no,
+          exam_date: session?.exam_date,
+          subject_code: session?.subject_code,
+          uploaded_at: detail.created_at || f.created_at,
+          image_url: detail.image_url,
+          identity_review_rows: d.type === 'unreadable_usn' && !d.attendance_id
+            ? detail.identity_review_rows || [] : [],
           confidence: att?.confidence ?? null,
         });
       }
     }
     return { isMock: false, data: allDoubts };
   } catch (err) {
-    return { isMock: false, data: [] };
+    throw new Error(getErrorMessage(err, 'Unable to load review items.'));
   }
 }
 
 export async function resolveDoubtDecision(doubtId, resolution) {
   try {
-    const userId = await getCurrentUserId();
-    const payload = userId ? { resolution, resolved_by: userId } : { resolution };
-    const res = await apiClient.post(`/api/doubts/${doubtId}/resolve`, payload);
+    const res = await apiClient.post(`/api/doubts/${doubtId}/resolve`, { resolution, resolve_related: true });
     return { isMock: false, data: res.data };
   } catch (err) {
     throw new Error(getErrorMessage(err, 'Failed to resolve doubt.'));
@@ -186,7 +204,9 @@ export async function resolveDoubtDecision(doubtId, resolution) {
 
 export async function finalizeFormRequest(formId) {
   try {
-    const res = await apiClient.post(`/api/forms/${formId}/finalize`);
+    const res = await apiClient.post(`/api/forms/${formId}/finalize`, null, {
+      params: { include_detail: false },
+    });
     return { isMock: false, data: res.data };
   } catch (err) {
     throw new Error(getErrorMessage(err, 'Failed to finalize form.'));
@@ -230,21 +250,30 @@ export async function exportFormPdf(formId, fallbackFilename) {
   }
 }
 
-export async function fetchRoomSummary(roomNo) {
+export async function fetchSummaryOptions(params, signal) {
   try {
-    const res = await apiClient.get(`/api/summary/room/${encodeURIComponent(roomNo)}`);
-    return { isMock: false, data: res.data };
+    const res = await apiClient.get('/api/summary/options', { params, signal });
+    return res.data;
   } catch (err) {
-    return { isMock: false, data: { room_no: roomNo, sessions: [] } };
+    throw new Error(getErrorMessage(err, 'Unable to load saved summary options.'));
   }
 }
 
-export async function fetchBranchSummary(branch) {
+export async function fetchRoomSummary(roomNo, params, signal) {
   try {
-    const res = await apiClient.get(`/api/summary/branch/${encodeURIComponent(branch)}`);
+    const res = await apiClient.get(`/api/summary/room/${encodeURIComponent(roomNo)}`, { params, signal });
     return { isMock: false, data: res.data };
   } catch (err) {
-    return { isMock: false, data: { branch, branchName: branch, sessions: [] } };
+    throw new Error(getErrorMessage(err, `Unable to load the saved summary for room ${roomNo}.`));
+  }
+}
+
+export async function fetchBranchSummary(branch, params, signal) {
+  try {
+    const res = await apiClient.get(`/api/summary/branch/${encodeURIComponent(branch)}`, { params, signal });
+    return { isMock: false, data: res.data };
+  } catch (err) {
+    throw new Error(getErrorMessage(err, `Unable to load the saved summary for branch ${branch}.`));
   }
 }
 

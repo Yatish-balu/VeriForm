@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, Download, AlertCircle } from 'lucide-react';
 import StepIndicator from '../components/StepIndicator';
 import DocumentViewer, { DocumentFullscreenModal } from '../components/DocumentViewer';
@@ -6,6 +6,32 @@ import PreFlightCard from '../components/PreFlightCard';
 import ReadyActionCard from '../components/ReadyActionCard';
 import { exportFormPdf, extractFormAttendance } from '../api/client';
 import { analyzeUploadedDocument, formatFileSize } from '../utils/imageQuality';
+
+function groupAttendanceByPaper(form) {
+  const papers = new Map((form?.sessions || []).map((session) => [
+    session.id,
+    { id: session.id, subjectCode: session.subject_code, examDate: session.exam_date, rows: [] },
+  ]));
+  for (const row of form?.rows || []) {
+    const id = row.sessionId ?? '';
+    if (!papers.has(id)) {
+      papers.set(id, { id, subjectCode: row.subjectCode, examDate: row.examDate, rows: [] });
+    }
+    papers.get(id).rows.push(row);
+  }
+
+  const entries = [...papers.values()];
+  const labels = entries.map(({ subjectCode, examDate }) =>
+    [subjectCode || 'Subject code unavailable', examDate].filter(Boolean).join(' · ')
+  );
+  return entries.map((paper, index) => ({
+    ...paper,
+    rows: paper.rows.sort((first, second) => first.slNo - second.slNo),
+    label: labels.indexOf(labels[index]) === labels.lastIndexOf(labels[index])
+      ? labels[index]
+      : `${labels[index]} · Paper ${index + 1}`,
+  }));
+}
 
 export default function UploadBFormPage({
   documentData,
@@ -21,10 +47,16 @@ export default function UploadBFormPage({
   const [isExtracting, setIsExtracting] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [extractionResult, setExtractionResult] = useState(null);
+  const [selectedPaperId, setSelectedPaperId] = useState(null);
   const [extractError, setExtractError] = useState('');
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const extractionInFlight = useRef(false);
+  const extractedFile = useRef(null);
+
+  const papers = groupAttendanceByPaper(extractionResult?.form);
+  const selectedPaper = papers.find((paper) => paper.id === selectedPaperId) ?? papers[0];
 
   const isPdf = Boolean(
     uploadedFile &&
@@ -95,10 +127,16 @@ export default function UploadBFormPage({
   };
 
   const handleExtract = async () => {
+    if (extractionInFlight.current) return;
     if (!uploadedFile) {
       setExtractError('Please select or drop a Form-B sheet (JPG, PNG, or PDF) first.');
       return;
     }
+    if (extractionResult && extractedFile.current === uploadedFile) {
+      setWorkflowStep(2);
+      return;
+    }
+    extractionInFlight.current = true;
     setIsExtracting(true);
     setExtractError('');
     try {
@@ -106,17 +144,20 @@ export default function UploadBFormPage({
         file: uploadedFile,
         documentData,
       });
+      extractedFile.current = uploadedFile;
       setExtractionResult(result);
+      setSelectedPaperId(null);
       setWorkflowStep(2);
       onAddHistoryRecord?.(result.form, documentData?.fileName || uploadedFile.name);
     } catch (err) {
       setExtractError(err?.message || 'Unable to extract attendance from this sheet.');
     } finally {
+      extractionInFlight.current = false;
       setIsExtracting(false);
     }
   };
 
-  const handleRowStatusToggle = (usn, nextStatus) => {
+  const handleRowStatusToggle = (attendanceId, nextStatus) => {
     setExtractionResult((prev) => {
       if (!prev) return prev;
       return {
@@ -124,7 +165,7 @@ export default function UploadBFormPage({
         form: {
           ...prev.form,
           rows: prev.form.rows.map((r) =>
-            r.usn === usn ? { ...r, status: nextStatus, needsReview: false } : r
+            r.id === attendanceId ? { ...r, status: nextStatus, needsReview: false } : r
           ),
         },
       };
@@ -133,14 +174,13 @@ export default function UploadBFormPage({
 
   const handleExportCsv = () => {
     if (!extractionResult?.form?.rows) return;
-    const header = ['Sl No', 'USN', 'Student Name', 'Attendance'];
-    const lines = extractionResult.form.rows.map((r) => [
-      r.slNo,
-      r.usn,
-      `"${r.name.replace(/"/g, '""')}"`,
-      r.status,
-    ]);
-    const csv = [header, ...lines].map((row) => row.join(',')).join('\n');
+    const header = ['Subject Code', 'Exam Date', 'Sl No', 'USN', 'Student Name', 'Attendance'];
+    const lines = papers.flatMap((paper) => paper.rows.map((row) => [
+      paper.subjectCode, paper.examDate, row.slNo, row.usn, row.name, row.status,
+    ]));
+    const csv = [header, ...lines]
+      .map((row) => row.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','))
+      .join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -274,7 +314,7 @@ export default function UploadBFormPage({
                 </button>
                 <button
                   type="button"
-                  onClick={onNavigateReview}
+                  onClick={() => onNavigateReview(extractionResult.form.id)}
                   className="px-3.5 py-2 rounded-[10px] border border-[#E5E7EB] text-[12.5px] font-medium text-[#111827] hover:bg-[#F7F7F5]"
                 >
                   Open Review Queue
@@ -289,6 +329,25 @@ export default function UploadBFormPage({
               </div>
             </div>
 
+            {selectedPaper && (
+              <div className="border-b border-[#E5E7EB] px-6 py-3">
+                {papers.length > 1 ? (
+                  <label className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-[#111827]">
+                    Subject
+                    <select
+                      value={selectedPaper.id}
+                      onChange={(event) => setSelectedPaperId(event.target.value)}
+                      className="max-w-full rounded-[8px] border border-[#E5E7EB] bg-white px-3 py-2"
+                    >
+                      {papers.map((paper) => <option key={paper.id} value={paper.id}>{paper.label}</option>)}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="text-[13px] font-medium text-[#111827]">{selectedPaper.label}</p>
+                )}
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -302,8 +361,15 @@ export default function UploadBFormPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#EFECE6] text-[13px]">
-                  {extractionResult.form.rows.map((row) => (
-                    <tr key={row.usn} className="hover:bg-[#FAF9F7]">
+                  {!selectedPaper?.rows.length && (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-5 text-center text-[#64748B]">
+                        No attendance rows were extracted.
+                      </td>
+                    </tr>
+                  )}
+                  {selectedPaper?.rows.map((row) => (
+                    <tr key={row.id} className="hover:bg-[#FAF9F7]">
                       <td className="py-3 pl-6 pr-3 font-mono-tech text-[12px] text-[#64748B]">
                         {row.slNo}
                       </td>
@@ -312,7 +378,7 @@ export default function UploadBFormPage({
                       </td>
                       <td className="py-3 px-3 text-[#111827] font-medium">{row.name}</td>
                       <td className="py-3 px-3 font-mono-tech text-[12px] text-[#64748B]">
-                        {Math.round((row.confidence || 0.9) * 100)}%
+                        {Math.round(row.confidence * 100)}%
                       </td>
                       <td className="py-3 px-3">
                         <span
@@ -331,7 +397,7 @@ export default function UploadBFormPage({
                         <div className="inline-flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => handleRowStatusToggle(row.usn, 'Present')}
+                            onClick={() => handleRowStatusToggle(row.id, 'Present')}
                             className={`px-2.5 py-1 rounded-[7px] text-[11.5px] font-medium border ${
                               row.status === 'Present'
                                 ? 'bg-[#EAF2E8] border-[#C6DFC2] text-[#166534]'
@@ -342,7 +408,7 @@ export default function UploadBFormPage({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleRowStatusToggle(row.usn, 'Absent')}
+                            onClick={() => handleRowStatusToggle(row.id, 'Absent')}
                             className={`px-2.5 py-1 rounded-[7px] text-[11.5px] font-medium border ${
                               row.status === 'Absent'
                                 ? 'bg-[#F9E4E4] border-[#ECC8C8] text-[#991B1B]'
@@ -375,7 +441,8 @@ export default function UploadBFormPage({
           <p className="mt-1.5 text-[13.5px] text-[#64748B]">
             {extractionResult.form.rows.filter((r) => r.status === 'Present').length} Present ·{' '}
             {extractionResult.form.rows.filter((r) => r.status === 'Absent').length} Absent ·{' '}
-            {extractionResult.form.rows.length} Total students accounted for.
+            {extractionResult.form.rows.filter((r) => r.status === 'Unclear').length} Unclear ·{' '}
+            {extractionResult.form.rows.length} Attendance records across all papers.
           </p>
 
           <div className="mt-6 flex flex-wrap items-center gap-3">

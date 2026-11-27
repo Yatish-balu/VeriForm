@@ -15,9 +15,6 @@ import { BranchTreeIcon, QueueListIcon } from './Icons';
 export default function Sidebar({
   activePath,
   onNavigate,
-  workspaces,
-  activeWorkspace,
-  onSelectWorkspace,
   openDoubtsCount,
   onOpenHelp,
   backendStatus,
@@ -27,16 +24,11 @@ export default function Sidebar({
   mobileOpen,
   onCloseMobile,
 }) {
-  const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const wsRef = useRef(null);
   const profileRef = useRef(null);
 
   useEffect(() => {
     function handleOutside(e) {
-      if (wsRef.current && !wsRef.current.contains(e.target)) {
-        setWsDropdownOpen(false);
-      }
       if (profileRef.current && !profileRef.current.contains(e.target)) {
         setProfileOpen(false);
       }
@@ -94,64 +86,6 @@ export default function Sidebar({
           >
             <X className="w-4 h-4" />
           </button>
-        )}
-      </div>
-
-      {/* Workspace Selector */}
-      <div className="relative mt-[18px]" ref={wsRef}>
-        <button
-          type="button"
-          onClick={() => setWsDropdownOpen((v) => !v)}
-          aria-expanded={wsDropdownOpen}
-          className="w-full bg-[#FAF9F7] border border-[#E3E1DA] rounded-[12px] px-[12px] py-[10px] flex items-center gap-2.5 text-left hover:border-[#CFCBC0] transition-colors"
-        >
-          <Building2 className="w-[17px] h-[17px] text-[#374151] shrink-0" strokeWidth={1.7} />
-          <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] font-semibold text-[#111827] leading-tight truncate">
-              {activeWorkspace.name}
-            </div>
-            <div className="text-[11px] text-[#64748B] leading-tight mt-[2px] truncate">
-              {activeWorkspace.subtitle}
-            </div>
-          </div>
-          <ChevronDown
-            className={`w-[15px] h-[15px] text-[#64748B] shrink-0 transition-transform ${
-              wsDropdownOpen ? 'rotate-180' : ''
-            }`}
-            strokeWidth={1.8}
-          />
-        </button>
-
-        {wsDropdownOpen && (
-          <div className="absolute left-0 right-0 mt-1.5 bg-white border border-[#E5E7EB] rounded-[12px] shadow-[0_10px_25px_-5px_rgba(17,24,39,0.1)] p-1.5 z-40">
-            <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#64748B]">
-              Switch workspace
-            </div>
-            {workspaces.map((ws) => {
-              const selected = ws.id === activeWorkspace.id;
-              return (
-                <button
-                  key={ws.id}
-                  type="button"
-                  onClick={() => {
-                    onSelectWorkspace(ws);
-                    setWsDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-[8px] text-left transition-colors ${
-                    selected
-                      ? 'bg-[#E2E7DC] text-[#111827]'
-                      : 'hover:bg-[#F7F7F5] text-[#111827]'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="text-[12.5px] font-semibold truncate">{ws.name}</div>
-                    <div className="text-[11px] text-[#64748B] truncate">{ws.subtitle}</div>
-                  </div>
-                  {selected && <Check className="w-3.5 h-3.5 text-[#293F2D] shrink-0 ml-2" />}
-                </button>
-              );
-            })}
-          </div>
         )}
       </div>
 

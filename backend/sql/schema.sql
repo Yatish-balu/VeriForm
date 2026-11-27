@@ -29,8 +29,14 @@ CREATE TABLE IF NOT EXISTS forms (
     status              TEXT        NOT NULL DEFAULT 'processing'
                             CHECK (status IN ('processing', 'needs_review', 'final')),
     uploaded_by         UUID        REFERENCES auth.users(id) ON DELETE SET NULL,
+    source_sha256       TEXT,
+    duplicate_of        UUID        REFERENCES forms(id),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_forms_unique_upload
+    ON forms (uploaded_by, source_sha256)
+    WHERE duplicate_of IS NULL AND source_sha256 IS NOT NULL;
 
 -- ─────────────────────────────────────────
 -- TABLE: sessions

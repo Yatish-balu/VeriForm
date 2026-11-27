@@ -286,23 +286,12 @@ def test_invalid_usn_or_unreadable_name_emits_unreadable_usn() -> None:
 
     assert doubts == [
         {
-            "attendance_id": None,
+            "attendance_id": att.id,
             "type": "unreadable_usn",
-            "message": "Please confirm USN",
+            "message": "Check the USN and student name against the original sheet.",
             "ai_guess": None,
-        },
-        {
-            "attendance_id": None,
-            "type": "unreadable_usn",
-            "message": "Please confirm USN",
-            "ai_guess": None,
-        },
-        {
-            "attendance_id": None,
-            "type": "unreadable_usn",
-            "message": "Please confirm USN",
-            "ai_guess": None,
-        },
+        }
+        for att in atts
     ]
 
 

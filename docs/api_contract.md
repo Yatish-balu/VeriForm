@@ -118,6 +118,8 @@ Send the signed-in user's Supabase access token as `Authorization: Bearer <acces
 
 Upload a B-form scan. The server runs Gemini Vision extraction, persists all data, and generates doubts for low-confidence cells.
 
+A repeat submission of the same file by the same user returns the existing form and review decisions. Uploading a changed file creates a new form.
+
 **Request** — `multipart/form-data`
 
 | Field | Type | Required | Notes |
@@ -125,7 +127,7 @@ Upload a B-form scan. The server runs Gemini Vision extraction, persists all dat
 | `file` | binary | ✅ | JPG / PNG / PDF, max 20 MB |
 | `uploaded_by` | UUID (form field) | ❌ | Defaults to the signed-in user. If supplied, it must match the token. |
 
-**Response `201 Created`** — `FormDetailOut`
+**Response `201 Created` for a new upload or `200 OK` for a repeat** — `FormDetailOut`
 
 ```json
 {
@@ -194,7 +196,7 @@ Upload a B-form scan. The server runs Gemini Vision extraction, persists all dat
 
 ### 2 · `GET /api/forms`
 
-List all uploaded forms with a count of still-open doubts.
+List unique uploads with a count of still-open doubts. `can_finalize` is true when a form is pending finalization and has no open doubts or unclear attendance cells.
 
 **Query params** — optional `status=processing`, `status=needs_review`, or `status=final`.
 
@@ -210,7 +212,8 @@ List all uploaded forms with a count of still-open doubts.
     "exam_name":   "5th Sem CIE-1",
     "status":      "needs_review",
     "created_at":  "2025-11-27T00:00:00Z",
-    "open_doubts": 3
+    "open_doubts": 3,
+    "can_finalize": false
   },
   {
     "id":          "form-uuid-2",
@@ -218,7 +221,8 @@ List all uploaded forms with a count of still-open doubts.
     "exam_name":   "5th Sem CIE-1",
     "status":      "final",
     "created_at":  "2025-11-26T18:00:00Z",
-    "open_doubts": 0
+    "open_doubts": 0,
+    "can_finalize": false
   }
 ]
 ```
@@ -230,6 +234,7 @@ List all uploaded forms with a count of still-open doubts.
 ### 3 · `GET /api/forms/{id}`
 
 Full form detail including all sessions, attendance rows (with nested student), and doubts.
+Older unreadable-USN doubts with no attendance link can include `identity_review_rows`. These are saved rows to compare with the original sheet.
 The signed `image_url` expires after one hour. Fetch the form detail again for a fresh link.
 
 **Path params**
@@ -311,6 +316,9 @@ Human reviewer submits a decision for one doubt. Updates the linked attendance r
 | `resolution` | string | ✅ | `"present"`, `"absent"`, or a custom note |
 | `resolved_by` | UUID | ❌ | Defaults to the signed-in reviewer. If supplied, it must match the token. |
 | `attendance_status` | `"present"` or `"absent"` | ❌ | Apply this attendance correction alongside a review note. Supply a status when resolving an unclear cell. |
+| `resolve_related` | boolean | ❌ | Apply one decision to outstanding attendance flags on the same cell, or to the corresponding identity or form check on the same upload. |
+
+Identity checks accept a review note. The response includes `resolved_doubt_ids` for the flags confirmed by the decision.
 
 **Response `200 OK`** — `DoubtOut`
 
@@ -351,7 +359,11 @@ Lock the form (`status → "final"`) after every doubt is resolved and each atte
 
 **Request Body** — none
 
-**Response `200 OK`** — `FormDetailOut`
+**Query params** — `include_detail` defaults to `true`. Set it to `false` to return only the committed form ID and status.
+
+**Response `200 OK`** — `FormDetailOut` by default, or `{"id": "form-uuid", "status": "final"}` when `include_detail=false`.
+
+Default response:
 
 ```json
 {
@@ -384,6 +396,10 @@ Lock the form (`status → "final"`) after every doubt is resolved and each atte
 ### 7 · `GET /api/summary/room/{room_no}`
 
 Returns one entry per exam date and subject in a room. Each entry uses the latest finalized upload for that paper if available. Otherwise it uses the latest upload awaiting review with `verified: false`. The percentage is present divided by all attendance rows, including unclear rows.
+
+The room and branch endpoints accept optional query parameters `exam_year` (calendar year of the exam date) and `form_id` (saved Form-B UUID). With `form_id` set, results come from that upload.
+
+Call `GET /api/summary/options` with the same query parameters to discover valid `rooms`, `branches`, and `exam_years` for the saved records. Room and branch choices respect both filters. Exam years reflect the available dates for the selected form or for all saved forms.
 
 **Path params**
 

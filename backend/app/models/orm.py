@@ -36,6 +36,8 @@ class Form(Base):
     footer_absent_raw   = Column(Text, nullable=True)
     status              = Column(Text, nullable=False, default="processing")
     uploaded_by         = Column(UUID(as_uuid=True), nullable=True)
+    source_sha256       = Column(Text, nullable=True)
+    duplicate_of        = Column(UUID(as_uuid=True), ForeignKey("forms.id"), nullable=True)
     created_at          = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

@@ -6,6 +6,7 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import replace
+from hashlib import sha256
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
@@ -18,10 +19,10 @@ from app.db.auth import require_user
 from app.db.database import get_db
 from app.db.supabase_client import delete_image, sign_form_image, upload_image
 from app.models.orm import Form as StoredForm
-from app.models.schemas import DoubtOut, FormDetailOut, FormListItem, FormStatus
+from app.models.schemas import DoubtOut, FormDetailOut, FormListItem, FormStatus, IdentityReviewRow
 from app.services.export import generate_form_pdf
 from app.services.gemini_extraction import ExtractedCell, ExtractedForm, extract_form
-from app.services.validation import generate_doubts
+from app.services.validation import generate_doubts, identity_needs_review
 
 router = APIRouter(dependencies=[Depends(require_user)])
 logger = logging.getLogger(__name__)
@@ -94,6 +95,19 @@ def _align_extraction(extracted: ExtractedForm) -> tuple[list[dict], ExtractedFo
 async def form_detail(form: StoredForm) -> FormDetailOut:
     """Serialize a form and supply a fresh private preview link when available."""
     detail = FormDetailOut.model_validate(form)
+    if any(doubt.type == "unreadable_usn" and doubt.attendance_id is None for doubt in detail.doubts):
+        rows = {}
+        for cell in detail.attendance:
+            if cell.student and identity_needs_review(cell.student.usn, cell.student.name):
+                rows[(cell.sl_no, cell.student_id)] = IdentityReviewRow(
+                    student_id=cell.student_id,
+                    sl_no=cell.sl_no,
+                    usn=cell.student.usn,
+                    name=cell.student.name,
+                )
+        detail.identity_review_rows = sorted(
+            rows.values(), key=lambda row: (row.sl_no is None, row.sl_no or 0, row.usn)
+        )
     if form.image_url:
         try:
             detail.image_url = await run_in_threadpool(sign_form_image, form.image_url, form.id)
@@ -103,8 +117,23 @@ async def form_detail(form: StoredForm) -> FormDetailOut:
     return detail
 
 
-@router.post("/upload", response_model=FormDetailOut, status_code=status.HTTP_201_CREATED)
+async def _reuse_upload(db: AsyncSession, form_id: UUID | None, response: Response) -> FormDetailOut:
+    form = await svc.get_form(db, form_id) if form_id is not None else None
+    if form is None:
+        raise HTTPException(409, "The existing upload changed. Try uploading again.")
+    await db.commit()
+    response.status_code = status.HTTP_200_OK
+    return await form_detail(form)
+
+
+@router.post(
+    "/upload",
+    response_model=FormDetailOut,
+    status_code=status.HTTP_201_CREATED,
+    responses={200: {"model": FormDetailOut, "description": "Already uploaded"}},
+)
 async def upload_form(
+    response: Response,
     file: UploadFile = File(..., description="JPG, PNG, or PDF of the B-form sheet"),
     uploaded_by: UUID | None = Form(None, description="Optional authenticated user UUID"),
     user_id: UUID = Depends(require_user),
@@ -124,6 +153,13 @@ async def upload_form(
         raise HTTPException(413, "File too large. Maximum size is 20 MB.")
     if not file_bytes.startswith(signature):
         raise HTTPException(400, "The file contents do not match the selected JPG, PNG, or PDF type.")
+
+    source_sha256 = sha256(file_bytes).hexdigest()
+    existing_id = await svc.find_upload(db, user_id, source_sha256)
+    if existing_id is not None:
+        return await _reuse_upload(db, existing_id, response)
+    # Release the database connection while Gemini processes the upload.
+    await db.rollback()
 
     try:
         extracted = await extract_form(file_bytes, content_type)
@@ -146,7 +182,11 @@ async def upload_form(
         footer_present_raw=extracted.footer_present_raw,
         footer_absent_raw=extracted.footer_absent_raw,
         uploaded_by=user_id,
+        source_sha256=source_sha256,
     )
+    if form is None:
+        existing_id = await svc.find_upload(db, user_id, source_sha256)
+        return await _reuse_upload(db, existing_id, response)
     sessions = await svc.save_sessions(db, form.id, sessions_data)
     students = {}
     # Acquire any new USN index entries in the same order across concurrent uploads.
@@ -215,7 +255,7 @@ async def upload_form(
 @router.get("/", response_model=list[FormListItem], include_in_schema=False)
 @router.get("", response_model=list[FormListItem])
 async def list_forms(status: FormStatus | None = None, db: AsyncSession = Depends(get_db)):
-    """List uploads with their current status and open doubt count."""
+    """List uploads with their open doubt count and finalization eligibility."""
     return await svc.list_forms(db, status=status)
 
 

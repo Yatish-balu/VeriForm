@@ -1,58 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Download } from 'lucide-react';
-import { fetchFormsList, fetchRoomSummary } from '../api/client';
+import SummaryFilters, { useSavedSummary } from '../components/SummaryFilters';
 
 export default function RoomSummariesPage() {
-  const [rooms, setRooms] = useState([]);
-  const [selectedRoom, setSelectedRoom] = useState('');
-  const [summary, setSummary] = useState(null);
-  const [errorMsg, setErrorMsg] = useState('');
-
-  useEffect(() => {
-    let active = true;
-    fetchFormsList()
-      .then((res) => {
-        if (!active) return;
-        const liveRooms = [
-          ...new Set((res.data || []).map((f) => f.room_no).filter(Boolean)),
-        ];
-        setRooms(liveRooms);
-        if (liveRooms.length > 0) {
-          setSelectedRoom(liveRooms[0]);
-        }
-      })
-      .catch((err) => {
-        if (active) {
-          setRooms([]);
-          setErrorMsg(err?.message || 'Unable to load available rooms.');
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!selectedRoom) {
-      setSummary({ room_no: '', sessions: [] });
-      return;
-    }
-    let active = true;
-    setErrorMsg('');
-    fetchRoomSummary(selectedRoom)
-      .then((res) => {
-        if (active) setSummary(res.data);
-      })
-      .catch((err) => {
-        if (active) {
-          setSummary({ room_no: selectedRoom, sessions: [] });
-          setErrorMsg(err?.message || `Unable to load summary for room ${selectedRoom}.`);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [selectedRoom]);
+  const view = useSavedSummary('room');
+  const { selected: selectedRoom, summary } = view;
 
   const handleDownloadCsv = (session) => {
     const rows = [
@@ -92,42 +44,14 @@ export default function RoomSummariesPage() {
             Room Summaries
           </h1>
           <p className="mt-[6px] text-[13.5px] sm:text-[14px] text-[#64748B]">
-            Session-by-session room attendance totals and verified absentee rosters.
+            Attendance totals and absentee rosters by exam session.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {rooms.map((room) => (
-            <button
-              key={room}
-              type="button"
-              onClick={() => setSelectedRoom(room)}
-              className={`px-3.5 py-2 rounded-[10px] text-[12.5px] font-semibold border transition-colors ${
-                selectedRoom === room
-                  ? 'bg-[#293F2D] text-white border-[#293F2D]'
-                  : 'bg-white text-[#111827] border-[#E5E7EB] hover:bg-[#FAF9F7]'
-              }`}
-            >
-              {room}
-            </button>
-          ))}
-        </div>
       </div>
 
-      {errorMsg && (
-        <div className="mt-5 bg-[#F9E4E4] border border-[#F1C5C5] rounded-[12px] px-4 py-3 text-[12.5px] text-[#991B1B]">
-          {errorMsg}
-        </div>
-      )}
-
-      {rooms.length === 0 ? (
-        <div className="mt-6 bg-white border border-[#E5E7EB] rounded-[14px] p-10 text-center">
-          <div className="text-[15px] font-semibold text-[#111827]">No room attendance data found</div>
-          <p className="text-[13px] text-[#64748B] mt-1">
-            Upload and verify Form-B attendance sheets to view room-wise attendance summaries.
-          </p>
-        </div>
-      ) : (
+      <SummaryFilters view={view} />
+      {summary?.sessions.length > 0 && (
         <div className="mt-6 space-y-5">
           {(summary?.sessions || []).map((session) => (
             <div
@@ -145,7 +69,7 @@ export default function RoomSummariesPage() {
                     </span>
                   </div>
                   <div className="text-[12px] text-[#64748B] font-mono-tech mt-0.5">
-                    Exam date: {session.exam_date}
+                    {session.exam_date} · {session.verified ? 'Verified' : 'Awaiting review'}
                   </div>
                 </div>
 
