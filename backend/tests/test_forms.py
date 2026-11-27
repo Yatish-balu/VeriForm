@@ -36,6 +36,15 @@ async def test_form_history_requires_authentication():
 
 
 @pytest.mark.asyncio
+async def test_chat_rejects_a_different_user_id(client):
+    response = await client.post(
+        "/api/chat",
+        json={"user_id": str(uuid4()), "message": "How many students were absent in room 101?"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_list_forms_empty(client):
     """Should return an empty list when no forms exist."""
     response = await client.get("/api/forms/")

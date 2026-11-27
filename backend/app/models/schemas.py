@@ -179,11 +179,11 @@ class BranchSummaryOut(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────
-# Chat  (stub — Mahadev's ownership)
+# Chat
 # ─────────────────────────────────────────────────────────────
 class ChatIn(BaseModel):
     user_id: UUID
-    message: str
+    message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
 class ChatOut(BaseModel):

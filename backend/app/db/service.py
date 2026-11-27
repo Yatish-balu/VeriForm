@@ -504,7 +504,7 @@ async def get_branch_summary(db: AsyncSession, branch: str) -> List[Dict]:
 
 
 # ══════════════════════════════════════════════════════════════
-# CHAT HISTORY  (called by Mahadev's chat endpoint)
+# CHAT HISTORY
 # ══════════════════════════════════════════════════════════════
 
 async def save_chat_message(
@@ -527,7 +527,7 @@ async def get_chat_history(
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.user_id == user_id)
-        .order_by(ChatMessage.created_at.asc())
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(reversed(result.scalars().all()))

@@ -6,7 +6,7 @@
 > `status` literals: `"processing"` | `"needs_review"` | `"final"`  
 > `attendance` status literals: `"present"` | `"absent"` | `"unclear"`
 
-Send the signed-in user's Supabase access token as `Authorization: Bearer <access_token>` for endpoints 1–8. These endpoints return `401` when the token is missing or invalid.
+Send the signed-in user's Supabase access token as `Authorization: Bearer <access_token>` for endpoints 1–9. These endpoints return `401` when the token is missing or invalid.
 
 ---
 
@@ -473,7 +473,7 @@ Returns counts by branch, exam date, and subject across rooms. `session_ids` lis
 
 ### 9 · `POST /api/chat`
 
-Send a message to the Gemini-powered chatbot. The server appends the user message to history, calls the AI, and returns the assistant reply.
+Ask about attendance for a room or branch. Gemini interprets the question, and the server reads the matching attendance records and saves the conversation.
 
 **Request Body** — `application/json` → `ChatIn`
 
@@ -482,14 +482,14 @@ Send a message to the Gemini-powered chatbot. The server appends the user messag
 ```json
 {
   "user_id": "user-uuid",
-  "message": "How many students were absent in room 101 on 10 Nov?"
+  "message": "What is the attendance summary for room 101?"
 }
 ```
 
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
-| `user_id` | UUID | ✅ | Auth user UUID (used to scope history) |
-| `message` | string | ✅ | Natural-language query |
+| `user_id` | UUID | ✅ | Must match the authenticated user. |
+| `message` | string | ✅ | Natural-language query up to 2,000 characters. |
 
 **Response `200 OK`** — `List[ChatOut]` _(always a single-item list — the assistant reply)_
 
@@ -510,8 +510,9 @@ Send a message to the Gemini-powered chatbot. The server appends the user messag
 
 | Status | Condition |
 |--------|-----------|
-| `422` | Missing `user_id` or `message` |
-| `500` | Gemini API error |
+| `403` | User ID differs from the signed-in user |
+| `422` | Invalid user ID or message |
+| `503` | Chat service unavailable |
 
 ---
 

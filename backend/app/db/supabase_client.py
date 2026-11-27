@@ -10,7 +10,8 @@ from functools import lru_cache
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
-from supabase import create_client, Client
+from httpx import Client as HttpClient
+from supabase import Client, ClientOptions, create_client
 from app.core.config import settings
 
 
@@ -20,7 +21,25 @@ def get_supabase() -> Client:
     Returns a Supabase client initialised with the SERVICE ROLE KEY.
     The service-role key bypasses RLS — keep it backend-only, never expose to frontend.
     """
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+    http_client = HttpClient(timeout=20, follow_redirects=True, http2=True)
+    try:
+        return create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY,
+            options=ClientOptions(httpx_client=http_client),
+        )
+    except Exception:
+        http_client.close()
+        raise
+
+
+def close_supabase() -> None:
+    """Release the shared connection pool at application shutdown."""
+    if get_supabase.cache_info().currsize:
+        http_client = get_supabase().options.httpx_client
+        if http_client is not None:
+            http_client.close()
+        get_supabase.cache_clear()
 
 
 # ─────────────────────────────────────────────────────────────

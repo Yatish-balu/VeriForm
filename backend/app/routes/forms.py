@@ -157,6 +157,7 @@ async def upload_form(
         for session, cell in zip(sessions, student.cells):
             needs_confirmation = (
                 cell.confidence < settings.CONFIDENCE_THRESHOLD
+                or cell.mark_type == "ambiguous"
                 or AMBIGUOUS_MARK.search(cell.ai_note or "") is not None
             )
             records.append({
