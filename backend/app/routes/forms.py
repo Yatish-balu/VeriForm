@@ -8,7 +8,7 @@ from collections import defaultdict
 from dataclasses import replace
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -19,6 +19,7 @@ from app.db.database import get_db
 from app.db.supabase_client import delete_image, sign_form_image, upload_image
 from app.models.orm import Form as StoredForm
 from app.models.schemas import DoubtOut, FormDetailOut, FormListItem, FormStatus
+from app.services.export import generate_form_pdf
 from app.services.gemini_extraction import ExtractedCell, ExtractedForm, extract_form
 from app.services.validation import generate_doubts
 
@@ -237,3 +238,23 @@ async def list_form_doubts(
     if not await svc.form_exists(db, form_id):
         raise HTTPException(404, "Form not found.")
     return await svc.get_doubts(db, form_id, resolved=resolved)
+
+
+# ─────────────────────────────────────────────────────────────
+# GET /api/forms/{id}/export
+# ─────────────────────────────────────────────────────────────
+@router.get("/{form_id}/export")
+async def export_form_pdf(form_id: UUID, db: AsyncSession = Depends(get_db)) -> Response:
+    """Export a form's attendance sheet as a downloadable PDF."""
+    form = await svc.get_form(db, form_id)
+    if not form:
+        raise HTTPException(status_code=404, detail="Form not found.")
+
+    pdf_bytes = generate_form_pdf(form)
+    safe_room = "".join(c if c.isalnum() or c in "-_" else "_" for c in (form.room_no or "unknown"))
+    filename = f"form_b_{safe_room}_{form_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
