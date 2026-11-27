@@ -27,7 +27,7 @@ from app.services.preprocess import preprocess_image
 logger = logging.getLogger(__name__)
 
 _MODELS            = ("gemini-3.5-flash-lite", "gemini-3.8-flash")
-_RETRIES_PER_MODEL = 2   # 1 initial attempt + 1 retry on 503/timeout
+_RETRIES_PER_MODEL = 3   # Up to 3 attempts with exponential backoff
 _PROMPT_PATH  = Path(__file__).parent / "prompts" / "extraction_prompt.txt"
 _PDF_MIME     = "application/pdf"
 _RASTER_MIMES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -156,8 +156,11 @@ def _is_retryable(exc: Exception) -> bool:
     """Return True for 503 / unavailable or timeout errors."""
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
         return True
+    exc_name = type(exc).__name__.lower()
+    if any(tok in exc_name for tok in ("timeout", "deadline", "temporarily", "unavailable", "servererror")):
+        return True
     msg = str(exc).lower()
-    return any(tok in msg for tok in ("503", "unavailable", "timeout", "timed out"))
+    return any(tok in msg for tok in ("503", "unavailable", "timeout", "timed out", "deadline", "high demand", "overloaded"))
 
 
 async def extract_form(image_bytes: bytes, content_type: str) -> ExtractedForm:
@@ -165,8 +168,8 @@ async def extract_form(image_bytes: bytes, content_type: str) -> ExtractedForm:
     1. Pre-process image (EXIF, resize, blur score) for raster uploads.
        PDFs are forwarded as-is.
     2. Build Gemini Vision request with the B-form extraction prompt.
-    3. Call Gemini asynchronously (temperature=0, JSON mode, 30s HTTP timeout),
-       iterating through _MODELS with 1 retry per model on 503/timeout.
+    3. Call Gemini asynchronously (temperature=0, JSON mode, 90s HTTP timeout),
+       iterating through _MODELS with retries on 503/timeout.
     4. Parse the returned JSON into an ExtractedForm dataclass.
     """
     image_part  = _build_image_part(image_bytes, content_type)
@@ -177,7 +180,7 @@ async def extract_form(image_bytes: bytes, content_type: str) -> ExtractedForm:
 
     client = genai.Client(
         api_key=settings.GEMINI_API_KEY,
-        http_options=genai_types.HttpOptions(timeout=30_000),
+        http_options=genai_types.HttpOptions(timeout=90_000),
     )
 
     for model in _MODELS:
@@ -196,12 +199,12 @@ async def extract_form(image_bytes: bytes, content_type: str) -> ExtractedForm:
             except Exception as exc:
                 last_exc = exc
                 logger.warning(
-                    "Gemini extraction failed (%s, attempt %d/%d): %s",
-                    model, attempt, _RETRIES_PER_MODEL, type(exc).__name__,
+                    "Gemini extraction failed (%s, attempt %d/%d): %s - %s",
+                    model, attempt, _RETRIES_PER_MODEL, type(exc).__name__, exc,
                 )
                 if attempt == _RETRIES_PER_MODEL or not _is_retryable(exc):
                     break
-                await asyncio.sleep(1)
+                await asyncio.sleep(min(2 ** (attempt - 1), 4))
         if raw_json:
             break
 
