@@ -11,13 +11,8 @@ import RoomSummariesPage from './pages/RoomSummariesPage';
 import BranchSummariesPage from './pages/BranchSummariesPage';
 import FormHistoryPage from './pages/FormHistoryPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import {
-  INITIAL_REVIEW_DOUBTS,
-  MOCK_FORM_HISTORY,
-  SAMPLE_FORM_DOCUMENT,
-  WORKSPACES,
-} from './data/mockData';
-import { checkBackendHealth } from './api/client';
+import { WORKSPACES } from './data/mockData';
+import { checkBackendHealth, fetchFormsList, fetchReviewDoubts } from './api/client';
 
 const PAGE_TITLES = {
   '/': 'Upload B-Form',
@@ -34,22 +29,36 @@ function WorkspaceShell() {
   const { user, authMode, signOut } = useAuth();
 
   const [activeWorkspace, setActiveWorkspace] = useState(WORKSPACES[0]);
-  const [documentData, setDocumentData] = useState(SAMPLE_FORM_DOCUMENT);
+  const [documentData, setDocumentData] = useState(null);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [uploadedPreviewUrl, setUploadedPreviewUrl] = useState(null);
-  const [doubts, setDoubts] = useState(INITIAL_REVIEW_DOUBTS);
-  const [historyForms, setHistoryForms] = useState(MOCK_FORM_HISTORY);
+  const [doubts, setDoubts] = useState([]);
+  const [historyForms, setHistoryForms] = useState([]);
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [backendStatus, setBackendStatus] = useState({
     connected: false,
-    mode: 'mock',
+    mode: 'live',
     detail: 'Checking…',
   });
 
   useEffect(() => {
-    checkBackendHealth().then(setBackendStatus);
+    checkBackendHealth().then((status) => {
+      setBackendStatus(status);
+      if (status.connected) {
+        fetchReviewDoubts()
+          .then((res) => {
+            if (res?.data) setDoubts(res.data);
+          })
+          .catch(() => {});
+        fetchFormsList()
+          .then((res) => {
+            if (res?.data) setHistoryForms(res.data);
+          })
+          .catch(() => {});
+      }
+    });
   }, []);
 
   const openDoubtsCount = doubts.filter((d) => !d.resolved).length;

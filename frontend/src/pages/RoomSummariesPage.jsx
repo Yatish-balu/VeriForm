@@ -2,11 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Download } from 'lucide-react';
 import { fetchFormsList, fetchRoomSummary } from '../api/client';
 
-const FALLBACK_ROOMS = ['CDS 105', 'CDS 108', 'CSE 204'];
-
 export default function RoomSummariesPage() {
-  const [rooms, setRooms] = useState(FALLBACK_ROOMS);
-  const [selectedRoom, setSelectedRoom] = useState(FALLBACK_ROOMS[0]);
+  const [rooms, setRooms] = useState([]);
+  const [selectedRoom, setSelectedRoom] = useState('');
   const [summary, setSummary] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -15,15 +13,11 @@ export default function RoomSummariesPage() {
     fetchFormsList()
       .then((res) => {
         if (!active) return;
-        if (res.isMock) {
-          setRooms(FALLBACK_ROOMS);
-          return;
-        }
         const liveRooms = [
           ...new Set((res.data || []).map((f) => f.room_no).filter(Boolean)),
         ];
         setRooms(liveRooms);
-        if (liveRooms.length > 0 && !liveRooms.includes(selectedRoom)) {
+        if (liveRooms.length > 0) {
           setSelectedRoom(liveRooms[0]);
         }
       })
@@ -126,102 +120,111 @@ export default function RoomSummariesPage() {
         </div>
       )}
 
-      <div className="mt-6 space-y-5">
-        {(summary?.sessions || []).map((session) => (
-          <div
-            key={session.session_id}
-            className="bg-white border border-[#E5E7EB] rounded-[14px] overflow-hidden"
-          >
-            <div className="px-6 py-4 border-b border-[#E5E7EB] flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2.5">
-                  <span className="text-[16px] font-semibold text-[#111827]">
-                    Room {selectedRoom}
-                  </span>
-                  <span className="font-mono-tech text-[12px] px-2.5 py-0.5 rounded-[6px] bg-[#F1F0EC] text-[#374151]">
-                    {session.subject_code}
-                  </span>
+      {rooms.length === 0 ? (
+        <div className="mt-6 bg-white border border-[#E5E7EB] rounded-[14px] p-10 text-center">
+          <div className="text-[15px] font-semibold text-[#111827]">No room attendance data found</div>
+          <p className="text-[13px] text-[#64748B] mt-1">
+            Upload and verify Form-B attendance sheets to view room-wise attendance summaries.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-6 space-y-5">
+          {(summary?.sessions || []).map((session) => (
+            <div
+              key={session.session_id}
+              className="bg-white border border-[#E5E7EB] rounded-[14px] overflow-hidden"
+            >
+              <div className="px-6 py-4 border-b border-[#E5E7EB] flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-[16px] font-semibold text-[#111827]">
+                      Room {selectedRoom}
+                    </span>
+                    <span className="font-mono-tech text-[12px] px-2.5 py-0.5 rounded-[6px] bg-[#F1F0EC] text-[#374151]">
+                      {session.subject_code}
+                    </span>
+                  </div>
+                  <div className="text-[12px] text-[#64748B] font-mono-tech mt-0.5">
+                    Exam date: {session.exam_date}
+                  </div>
                 </div>
-                <div className="text-[12px] text-[#64748B] font-mono-tech mt-0.5">
-                  Exam date: {session.exam_date}
+
+                <button
+                  type="button"
+                  onClick={() => handleDownloadCsv(session)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-[10px] border border-[#E5E7EB] text-[12.5px] font-medium text-[#111827] hover:bg-[#F7F7F5]"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export CSV</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[#E5E7EB] bg-[#FAF9F7]">
+                <div className="px-6 py-4">
+                  <div className="text-[11.5px] text-[#64748B]">Total Students</div>
+                  <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#111827]">
+                    {session.total}
+                  </div>
+                </div>
+                <div className="px-6 py-4">
+                  <div className="text-[11.5px] text-[#64748B]">Present</div>
+                  <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#166534]">
+                    {session.present}
+                  </div>
+                </div>
+                <div className="px-6 py-4">
+                  <div className="text-[11.5px] text-[#64748B]">Absent</div>
+                  <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#991B1B]">
+                    {session.absent}
+                  </div>
+                </div>
+                <div className="px-6 py-4">
+                  <div className="text-[11.5px] text-[#64748B]">Attendance Rate</div>
+                  <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#111827]">
+                    {session.percentage}%
+                  </div>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => handleDownloadCsv(session)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-[10px] border border-[#E5E7EB] text-[12.5px] font-medium text-[#111827] hover:bg-[#F7F7F5]"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Export CSV</span>
-              </button>
+              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[#E5E7EB] border-t border-[#E5E7EB]">
+                <div className="p-5">
+                  <div className="text-[12px] font-semibold text-[#166534] uppercase tracking-[0.06em] mb-3">
+                    Present Students ({session.present_students.length})
+                  </div>
+                  <div className="space-y-2">
+                    {session.present_students.map((st) => (
+                      <div
+                        key={st.usn}
+                        className="flex items-center justify-between text-[12.5px] py-1 border-b border-[#F3F2EE] last:border-0"
+                      >
+                        <span className="font-mono-tech text-[#374151]">{st.usn}</span>
+                        <span className="text-[#111827] font-medium">{st.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-5">
+                  <div className="text-[12px] font-semibold text-[#991B1B] uppercase tracking-[0.06em] mb-3">
+                    Absentees ({session.absent_students.length})
+                  </div>
+                  <div className="space-y-2">
+                    {session.absent_students.map((st) => (
+                      <div
+                        key={st.usn}
+                        className="flex items-center justify-between text-[12.5px] py-1 border-b border-[#F3F2EE] last:border-0"
+                      >
+                        <span className="font-mono-tech text-[#374151]">{st.usn}</span>
+                        <span className="text-[#991B1B] font-medium">{st.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-[#E5E7EB] bg-[#FAF9F7]">
-              <div className="px-6 py-4">
-                <div className="text-[11.5px] text-[#64748B]">Total Students</div>
-                <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#111827]">
-                  {session.total}
-                </div>
-              </div>
-              <div className="px-6 py-4">
-                <div className="text-[11.5px] text-[#64748B]">Present</div>
-                <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#166534]">
-                  {session.present}
-                </div>
-              </div>
-              <div className="px-6 py-4">
-                <div className="text-[11.5px] text-[#64748B]">Absent</div>
-                <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#991B1B]">
-                  {session.absent}
-                </div>
-              </div>
-              <div className="px-6 py-4">
-                <div className="text-[11.5px] text-[#64748B]">Attendance Rate</div>
-                <div className="mt-1 text-[22px] font-bold font-mono-tech text-[#111827]">
-                  {session.percentage}%
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[#E5E7EB] border-t border-[#E5E7EB]">
-              <div className="p-5">
-                <div className="text-[12px] font-semibold text-[#166534] uppercase tracking-[0.06em] mb-3">
-                  Present Sample ({session.present_students.length})
-                </div>
-                <div className="space-y-2">
-                  {session.present_students.map((st) => (
-                    <div
-                      key={st.usn}
-                      className="flex items-center justify-between text-[12.5px] py-1 border-b border-[#F3F2EE] last:border-0"
-                    >
-                      <span className="font-mono-tech text-[#374151]">{st.usn}</span>
-                      <span className="text-[#111827] font-medium">{st.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="p-5">
-                <div className="text-[12px] font-semibold text-[#991B1B] uppercase tracking-[0.06em] mb-3">
-                  Absentees ({session.absent_students.length})
-                </div>
-                <div className="space-y-2">
-                  {session.absent_students.map((st) => (
-                    <div
-                      key={st.usn}
-                      className="flex items-center justify-between text-[12.5px] py-1 border-b border-[#F3F2EE] last:border-0"
-                    >
-                      <span className="font-mono-tech text-[#374151]">{st.usn}</span>
-                      <span className="text-[#991B1B] font-medium">{st.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

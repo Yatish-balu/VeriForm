@@ -90,26 +90,34 @@ export default function BranchSummariesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#EFECE6] text-[13px]">
-              {(summary?.sessions || []).map((s) => (
-                <tr key={s.session_id} className="hover:bg-[#FAF9F7]">
-                  <td className="py-3.5 pl-6 pr-3 font-mono-tech text-[#374151]">
-                    {s.exam_date}
-                  </td>
-                  <td className="py-3.5 px-3 font-mono-tech font-medium text-[#111827]">
-                    {s.subject_code}
-                  </td>
-                  <td className="py-3.5 px-3 font-mono-tech text-[#111827]">{s.total}</td>
-                  <td className="py-3.5 px-3 font-mono-tech text-[#166534] font-semibold">
-                    {s.present}
-                  </td>
-                  <td className="py-3.5 px-3 font-mono-tech text-[#991B1B] font-semibold">
-                    {s.absent}
-                  </td>
-                  <td className="py-3.5 pl-3 pr-6 text-right font-mono-tech font-semibold text-[#111827]">
-                    {s.percentage}%
+              {(summary?.sessions || []).length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[#64748B] text-[13px]">
+                    No attendance records found for branch {selectedBranch}. Upload Form-B sheets to view summaries.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                (summary?.sessions || []).map((s) => (
+                  <tr key={s.session_id} className="hover:bg-[#FAF9F7]">
+                    <td className="py-3.5 pl-6 pr-3 font-mono-tech text-[#374151]">
+                      {s.exam_date}
+                    </td>
+                    <td className="py-3.5 px-3 font-mono-tech font-medium text-[#111827]">
+                      {s.subject_code}
+                    </td>
+                    <td className="py-3.5 px-3 font-mono-tech text-[#111827]">{s.total}</td>
+                    <td className="py-3.5 px-3 font-mono-tech text-[#166534] font-semibold">
+                      {s.present}
+                    </td>
+                    <td className="py-3.5 px-3 font-mono-tech text-[#991B1B] font-semibold">
+                      {s.absent}
+                    </td>
+                    <td className="py-3.5 pl-3 pr-6 text-right font-mono-tech font-semibold text-[#111827]">
+                      {s.percentage}%
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

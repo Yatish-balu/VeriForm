@@ -91,7 +91,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signIn = async (rawEmail, password) => {
-    const email = rawEmail.trim();
+    const email = rawEmail.trim().toLowerCase();
 
     if (isSupabaseConfigured && supabase) {
       const { data, error } = await supabase.auth.signInWithPassword({

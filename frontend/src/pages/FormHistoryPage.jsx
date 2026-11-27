@@ -84,55 +84,63 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#EFECE6] text-[13px]">
-              {filtered.map((form) => {
-                const isFinal = form.status === 'final';
-                return (
-                  <tr key={form.id} className="hover:bg-[#FAF9F7]">
-                    <td className="py-3.5 pl-6 pr-3 font-medium text-[#111827]">
-                      {form.file_name || `${form.room_no}_FormB.jpg`}
-                    </td>
-                    <td className="py-3.5 px-3 font-mono-tech text-[#374151]">
-                      {form.room_no}
-                    </td>
-                    <td className="py-3.5 px-3 text-[#4B5563]">{form.exam_name}</td>
-                    <td className="py-3.5 px-3 font-mono-tech text-[#111827]">
-                      {form.open_doubts ?? 0}
-                    </td>
-                    <td className="py-3.5 px-3">
-                      <span
-                        className={`inline-flex px-2.5 py-0.5 rounded-full text-[11.5px] font-medium ${
-                          isFinal
-                            ? 'bg-[#EAF2E8] text-[#166534]'
-                            : 'bg-[#FBEFD9] text-[#92400E]'
-                        }`}
-                      >
-                        {isFinal ? 'Final' : 'Needs Review'}
-                      </span>
-                    </td>
-                    <td className="py-3.5 pl-3 pr-6 text-right">
-                      <div className="inline-flex items-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() => handleExportPdf(form)}
-                          disabled={exportingId === form.id}
-                          className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#475569] hover:text-[#111827] disabled:opacity-40"
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[#64748B] text-[13px]">
+                    No Form-B attendance records found. Upload a signed exam sheet to begin.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((form) => {
+                  const isFinal = form.status === 'final';
+                  return (
+                    <tr key={form.id} className="hover:bg-[#FAF9F7]">
+                      <td className="py-3.5 pl-6 pr-3 font-medium text-[#111827]">
+                        {form.file_name || `${form.room_no}_FormB.jpg`}
+                      </td>
+                      <td className="py-3.5 px-3 font-mono-tech text-[#374151]">
+                        {form.room_no}
+                      </td>
+                      <td className="py-3.5 px-3 text-[#4B5563]">{form.exam_name}</td>
+                      <td className="py-3.5 px-3 font-mono-tech text-[#111827]">
+                        {form.open_doubts ?? 0}
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <span
+                          className={`inline-flex px-2.5 py-0.5 rounded-full text-[11.5px] font-medium ${
+                            isFinal
+                              ? 'bg-[#EAF2E8] text-[#166534]'
+                              : 'bg-[#FBEFD9] text-[#92400E]'
+                          }`}
                         >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>{exportingId === form.id ? 'Exporting…' : 'Export PDF'}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={isFinal ? onOpenUpload : onOpenReview}
-                          className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#293F2D] hover:underline"
-                        >
-                          <span>{isFinal ? 'View' : 'Review'}</span>
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                          {isFinal ? 'Final' : 'Needs Review'}
+                        </span>
+                      </td>
+                      <td className="py-3.5 pl-3 pr-6 text-right">
+                        <div className="inline-flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handleExportPdf(form)}
+                            disabled={exportingId === form.id}
+                            className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#475569] hover:text-[#111827] disabled:opacity-40"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>{exportingId === form.id ? 'Exporting…' : 'Export PDF'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={isFinal ? onOpenUpload : onOpenReview}
+                            className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#293F2D] hover:underline"
+                          >
+                            <span>{isFinal ? 'View' : 'Review'}</span>
+                            <ArrowUpRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
