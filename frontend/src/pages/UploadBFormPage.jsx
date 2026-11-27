@@ -4,7 +4,7 @@ import StepIndicator from '../components/StepIndicator';
 import DocumentViewer, { DocumentFullscreenModal } from '../components/DocumentViewer';
 import PreFlightCard from '../components/PreFlightCard';
 import ReadyActionCard from '../components/ReadyActionCard';
-import { extractFormAttendance } from '../api/client';
+import { exportFormPdf, extractFormAttendance } from '../api/client';
 import { analyzeUploadedDocument, formatFileSize } from '../utils/imageQuality';
 import { SAMPLE_FORM_DOCUMENT } from '../data/mockData';
 
@@ -20,6 +20,7 @@ export default function UploadBFormPage({
 }) {
   const [workflowStep, setWorkflowStep] = useState(1); // 1 = Upload form (matches screenshot), 2 = Review extraction, 3 = Finalize & export
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [extractionResult, setExtractionResult] = useState(null);
   const [extractError, setExtractError] = useState('');
   const [zoom, setZoom] = useState(1);
@@ -144,6 +145,23 @@ export default function UploadBFormPage({
     a.download = `${documentData.fileName.replace(/\.[^.]+$/, '')}_attendance.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportPdf = async () => {
+    const formId = extractionResult?.form?.id;
+    if (!formId) return;
+    setIsExportingPdf(true);
+    setExtractError('');
+    try {
+      await exportFormPdf(
+        formId,
+        `form_b_${extractionResult.form.room_no || 'sheet'}_${formId}.pdf`
+      );
+    } catch (err) {
+      setExtractError(err?.message || 'Unable to export PDF.');
+    } finally {
+      setIsExportingPdf(false);
+    }
   };
 
   const statusPill = isExtracting
@@ -360,8 +378,17 @@ export default function UploadBFormPage({
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
               type="button"
+              onClick={handleExportPdf}
+              disabled={isExportingPdf || extractionResult.isMockResult}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#293F2D] text-white text-[13px] font-semibold hover:bg-[#203324] disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Download className="w-4 h-4" />
+              <span>{isExportingPdf ? 'Exporting PDF…' : 'Export PDF'}</span>
+            </button>
+            <button
+              type="button"
               onClick={handleExportCsv}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] bg-[#293F2D] text-white text-[13px] font-semibold hover:bg-[#203324]"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[10px] border border-[#E5E7EB] text-[#111827] text-[13px] font-semibold hover:bg-[#F7F7F5]"
             >
               <Download className="w-4 h-4" />
               <span>Export CSV Record</span>

@@ -10,12 +10,21 @@ const BRANCHES = [
 export default function BranchSummariesPage() {
   const [selectedBranch, setSelectedBranch] = useState('CY');
   const [summary, setSummary] = useState(null);
+  const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     let active = true;
-    fetchBranchSummary(selectedBranch).then((res) => {
-      if (active) setSummary(res.data);
-    });
+    setErrorMsg('');
+    fetchBranchSummary(selectedBranch)
+      .then((res) => {
+        if (active) setSummary(res.data);
+      })
+      .catch((err) => {
+        if (active) {
+          setSummary({ branch: selectedBranch, sessions: [] });
+          setErrorMsg(err?.message || 'Unable to load branch summary.');
+        }
+      });
     return () => {
       active = false;
     };
@@ -52,6 +61,11 @@ export default function BranchSummariesPage() {
       </div>
 
       <div className="mt-6 bg-white border border-[#E5E7EB] rounded-[14px] overflow-hidden">
+        {errorMsg && (
+          <div className="px-6 py-3 bg-[#F9E4E4] border-b border-[#F1C5C5] text-[12.5px] text-[#991B1B]">
+            {errorMsg}
+          </div>
+        )}
         <div className="px-6 py-4 border-b border-[#E5E7EB] flex items-center justify-between">
           <div>
             <h2 className="text-[16px] font-semibold text-[#111827]">

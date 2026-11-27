@@ -1,11 +1,26 @@
 import React, { useState } from 'react';
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, Download } from 'lucide-react';
+import { exportFormPdf } from '../api/client';
 
 export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
   const [statusFilter, setStatusFilter] = useState('all');
+  const [exportingId, setExportingId] = useState(null);
+  const [exportError, setExportError] = useState('');
 
   const filtered =
     statusFilter === 'all' ? forms : forms.filter((f) => f.status === statusFilter);
+
+  const handleExportPdf = async (form) => {
+    setExportingId(form.id);
+    setExportError('');
+    try {
+      await exportFormPdf(form.id, `form_b_${form.room_no || 'sheet'}_${form.id}.pdf`);
+    } catch (err) {
+      setExportError(err?.message || 'Unable to export PDF.');
+    } finally {
+      setExportingId(null);
+    }
+  };
 
   return (
     <div className="px-5 sm:px-8 lg:px-[42px] pt-[26px] pb-[32px] max-w-[1440px]">
@@ -27,6 +42,12 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
           Upload New Form-B
         </button>
       </div>
+
+      {exportError && (
+        <div className="mt-4 bg-[#F9E4E4] border border-[#F1C5C5] rounded-[12px] px-4 py-3 text-[12.5px] text-[#991B1B]">
+          {exportError}
+        </div>
+      )}
 
       <div className="mt-6 flex items-center gap-2">
         {[
@@ -89,14 +110,25 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
                       </span>
                     </td>
                     <td className="py-3.5 pl-3 pr-6 text-right">
-                      <button
-                        type="button"
-                        onClick={isFinal ? onOpenUpload : onOpenReview}
-                        className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#293F2D] hover:underline"
-                      >
-                        <span>{isFinal ? 'View' : 'Review'}</span>
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="inline-flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleExportPdf(form)}
+                          disabled={exportingId === form.id}
+                          className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#475569] hover:text-[#111827] disabled:opacity-40"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>{exportingId === form.id ? 'Exporting…' : 'Export PDF'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={isFinal ? onOpenUpload : onOpenReview}
+                          className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#293F2D] hover:underline"
+                        >
+                          <span>{isFinal ? 'View' : 'Review'}</span>
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

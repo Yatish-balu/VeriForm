@@ -54,6 +54,16 @@ export default function AskAIDrawer({
           isMock: res.isMock,
         },
       ]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          role: 'assistant',
+          content: err?.message || 'Unable to reach VeriForm AI right now.',
+          isMock: false,
+        },
+      ]);
     } finally {
       setLoading(false);
     }
