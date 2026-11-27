@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Send, X } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Paperclip, Send, X } from 'lucide-react';
 import { SparkleIcon } from './Icons';
 import { askVeriFormAssistant } from '../api/client';
 
@@ -15,7 +15,9 @@ export default function AskAIDrawer({
   currentSheet,
   openDoubtsCount,
   backendStatus,
+  onUploadFile,
 }) {
+  const fileInputRef = useRef(null);
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
@@ -161,6 +163,28 @@ export default function AskAIDrawer({
           }}
           className="p-4 border-t border-[#E5E7EB] bg-white flex items-center gap-2"
         >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && onUploadFile) {
+                onUploadFile(file);
+              }
+              e.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            title="Upload Form-B for AI extraction"
+            aria-label="Upload Form-B sheet"
+            className="h-10 w-10 rounded-[10px] border border-[#E5E7EB] bg-[#FAF9F7] text-[#64748B] hover:text-[#111827] hover:bg-[#F1F0EC] flex items-center justify-center shrink-0 transition-colors"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
           <input
             type="text"
             value={input}

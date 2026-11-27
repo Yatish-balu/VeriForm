@@ -22,6 +22,16 @@ _SUM_FOOTER_RE = re.compile(r"\d+(?:\s*\+\s*\d+)*")
 _UNREADABLE_NAMES = {"unreadable", "illegible", "unknown", "n/a", "na", "-"}
 
 
+def identity_needs_review(usn: str, name: str) -> bool:
+    usn, name = usn.strip(), name.strip()
+    return (
+        not _USN_RE.fullmatch(usn)
+        or not name
+        or "?" in name
+        or name.lower() in _UNREADABLE_NAMES
+    )
+
+
 def _parse_footer_int(raw: Optional[str]) -> Optional[int]:
     """Parse an integer count from a footer string (handles 'NIL' and '30+1')."""
     if raw is None:
@@ -109,18 +119,16 @@ def generate_doubts(
 
     # ── Rules 1, 2, 5: Per-student and per-cell checks ───────
     for s_idx, student in enumerate(extracted.students):
-        usn = (student.usn or "").strip()
-        name = (student.name or "").strip()
-        if (
-            not _USN_RE.match(usn)
-            or not name
-            or "?" in name
-            or name.lower() in _UNREADABLE_NAMES
-        ):
+        if identity_needs_review(student.usn or "", student.name or ""):
+            attendance_id = next(
+                (att_id_map[(s_idx, c_idx)] for c_idx in range(len(student.cells))
+                 if (s_idx, c_idx) in att_id_map),
+                None,
+            )
             doubts.append({
-                "attendance_id": None,
+                "attendance_id": attendance_id,
                 "type": "unreadable_usn",
-                "message": "Please confirm USN",
+                "message": "Check the USN and student name against the original sheet.",
                 "ai_guess": None,
             })
 

@@ -89,6 +89,7 @@ class ResolveDoubtIn(BaseModel):
         description="'present', 'absent', or a review note."
     )
     resolved_by: Optional[UUID] = Field(default=None, description="Defaults to the signed-in reviewer.")
+    resolve_related: bool = False
     attendance_status: Optional[Literal["present", "absent"]] = Field(
         default=None, description="Attendance correction to apply alongside a review note."
     )
@@ -99,6 +100,10 @@ class ResolveDoubtIn(BaseModel):
             if self.attendance_status != self.resolution:
                 raise ValueError("The attendance status and resolution must agree.")
         return self
+
+
+class DoubtResolutionOut(DoubtOut):
+    resolved_doubt_ids: list[UUID]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -120,10 +125,23 @@ class FormOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class IdentityReviewRow(BaseModel):
+    student_id: UUID
+    sl_no: int | None
+    usn: str
+    name: str
+
+
 class FormDetailOut(FormOut):
     sessions:   List[SessionOut]  = []
     attendance: List[AttendanceOut] = []
     doubts:     List[DoubtOut]    = []
+    identity_review_rows: list[IdentityReviewRow] = Field(default_factory=list)
+
+
+class FinalizeFormOut(BaseModel):
+    id: UUID
+    status: Literal["final"]
 
 
 class FormListItem(BaseModel):
@@ -133,6 +151,7 @@ class FormListItem(BaseModel):
     status:     FormStatus
     created_at: datetime
     open_doubts: int = 0
+    can_finalize: bool
 
     model_config = {"from_attributes": True}
 
@@ -176,6 +195,12 @@ class BranchSessionSummary(BaseModel):
 class BranchSummaryOut(BaseModel):
     branch:   str
     sessions: List[BranchSessionSummary] = []
+
+
+class SummaryOptionsOut(BaseModel):
+    rooms: list[str]
+    branches: list[str]
+    exam_years: list[int]
 
 
 # ─────────────────────────────────────────────────────────────

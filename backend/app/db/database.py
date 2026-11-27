@@ -18,7 +18,7 @@ if "pytest" in sys.modules:
     # Avoid cross-loop connection reuse errors under pytest-asyncio
     _engine_kwargs["poolclass"] = NullPool
 else:
-    _engine_kwargs.update(pool_size=5, max_overflow=10, pool_pre_ping=True)
+    _engine_kwargs.update(pool_size=10, max_overflow=20, pool_recycle=1800)
 
 engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
 

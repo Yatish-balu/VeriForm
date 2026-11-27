@@ -1,14 +1,32 @@
 import React, { useState } from 'react';
 import { ArrowUpRight, Download } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { exportFormPdf } from '../api/client';
 
-export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
+const FORM_STATUS = {
+  processing: { label: 'Processing', color: 'bg-[#F1F0EC] text-[#475569]' },
+  needs_review: { label: 'Needs Review', color: 'bg-[#FBEFD9] text-[#92400E]' },
+  unclear: { label: 'Unclear Attendance', color: 'bg-[#FBEFD9] text-[#92400E]' },
+  ready: { label: 'Ready to Finalize', color: 'bg-[#EAF2E8] text-[#166534]' },
+  final: { label: 'Final', color: 'bg-[#EAF2E8] text-[#166534]' },
+};
+
+function displayStatus(form) {
+  if (form.can_finalize) return 'ready';
+  if (form.status === 'needs_review' && form.open_doubts === 0 && form.can_finalize === false) return 'unclear';
+  return form.status;
+}
+
+export default function FormHistoryPage({ forms, loading, error, onRetry, onOpenUpload }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [exportingId, setExportingId] = useState(null);
   const [exportError, setExportError] = useState('');
 
   const filtered =
-    statusFilter === 'all' ? forms : forms.filter((f) => f.status === statusFilter);
+    statusFilter === 'all' ? forms : forms.filter((form) => {
+      const status = displayStatus(form);
+      return status === statusFilter || (statusFilter === 'needs_review' && status === 'unclear');
+    });
 
   const handleExportPdf = async (form) => {
     setExportingId(form.id);
@@ -48,11 +66,17 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
           {exportError}
         </div>
       )}
+      {error && (
+        <p role="alert" className="mt-4 rounded-xl bg-[#F9E4E4] px-4 py-3 text-sm text-[#991B1B]">
+          {error} <button type="button" className="ml-2 underline" onClick={onRetry}>Retry</button>
+        </p>
+      )}
 
-      <div className="mt-6 flex items-center gap-2">
+      <div className="mt-6 flex flex-wrap items-center gap-2">
         {[
           { key: 'all', label: 'All Forms' },
           { key: 'needs_review', label: 'Needs Review' },
+          { key: 'ready', label: 'Ready to Finalize' },
           { key: 'final', label: 'Finalized' },
         ].map((tab) => (
           <button
@@ -75,7 +99,7 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-[#F7F7F5] border-b border-[#E5E7EB] text-[11.5px] font-semibold text-[#64748B]">
-                <th className="py-3 pl-6 pr-3">File / Sheet</th>
+                <th className="py-3 pl-6 pr-3">Uploaded Form-B</th>
                 <th className="py-3 px-3">Room</th>
                 <th className="py-3 px-3">Exam</th>
                 <th className="py-3 px-3">Open Doubts</th>
@@ -84,19 +108,20 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#EFECE6] text-[13px]">
-              {filtered.length === 0 ? (
+              {loading || error || filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-[#64748B] text-[13px]">
-                    No Form-B attendance records found. Upload a signed exam sheet to begin.
+                    {loading ? 'Loading saved forms…' : error ? 'Form history is unavailable.' : 'No saved Form-Bs match this view.'}
                   </td>
                 </tr>
               ) : (
                 filtered.map((form) => {
-                  const isFinal = form.status === 'final';
+                  const status = displayStatus(form);
+                  const { label, color } = FORM_STATUS[status];
                   return (
                     <tr key={form.id} className="hover:bg-[#FAF9F7]">
                       <td className="py-3.5 pl-6 pr-3 font-medium text-[#111827]">
-                        {form.file_name || `${form.room_no}_FormB.jpg`}
+                        {form.file_name || (form.created_at ? new Date(form.created_at).toLocaleString() : 'Form-B')}
                       </td>
                       <td className="py-3.5 px-3 font-mono-tech text-[#374151]">
                         {form.room_no}
@@ -106,14 +131,8 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
                         {form.open_doubts ?? 0}
                       </td>
                       <td className="py-3.5 px-3">
-                        <span
-                          className={`inline-flex px-2.5 py-0.5 rounded-full text-[11.5px] font-medium ${
-                            isFinal
-                              ? 'bg-[#EAF2E8] text-[#166534]'
-                              : 'bg-[#FBEFD9] text-[#92400E]'
-                          }`}
-                        >
-                          {isFinal ? 'Final' : 'Needs Review'}
+                        <span className={`inline-flex px-2.5 py-0.5 rounded-full text-[11.5px] font-medium ${color}`}>
+                          {label}
                         </span>
                       </td>
                       <td className="py-3.5 pl-3 pr-6 text-right">
@@ -127,14 +146,15 @@ export default function FormHistoryPage({ forms, onOpenUpload, onOpenReview }) {
                             <Download className="w-3.5 h-3.5" />
                             <span>{exportingId === form.id ? 'Exporting…' : 'Export PDF'}</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={isFinal ? onOpenUpload : onOpenReview}
+                          <Link to={`/rooms?form_id=${encodeURIComponent(form.id)}`} className="text-[12.5px] font-medium text-[#293F2D] hover:underline">Room summary</Link>
+                          <Link to={`/branches?form_id=${encodeURIComponent(form.id)}`} className="text-[12.5px] font-medium text-[#293F2D] hover:underline">Branch summary</Link>
+                          {form.status === 'needs_review' && <Link
+                            to={`/review?form_id=${encodeURIComponent(form.id)}`}
                             className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[#293F2D] hover:underline"
                           >
-                            <span>{isFinal ? 'View' : 'Review'}</span>
+                            <span>{status === 'ready' ? 'Finalize form' : status === 'unclear' ? 'View issue' : 'Review'}</span>
                             <ArrowUpRight className="w-3.5 h-3.5" />
-                          </button>
+                          </Link>}
                         </div>
                       </td>
                     </tr>

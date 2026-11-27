@@ -3,27 +3,6 @@
  * All mock/fake student names and mock records have been removed in favor of live data.
  */
 
-export const WORKSPACES = [
-  {
-    id: 'ws-2025-26',
-    name: 'Academic workspace',
-    subtitle: 'Exam Cell · 2025–26',
-    semesterScope: 'Odd & Even Semesters',
-  },
-  {
-    id: 'ws-2024-25',
-    name: 'Academic workspace',
-    subtitle: 'Exam Cell · 2024–25',
-    semesterScope: 'Archived Academic Cycle',
-  },
-  {
-    id: 'ws-supp-2026',
-    name: 'Supplementary cell',
-    subtitle: 'Makeup Exam · 2025–26',
-    semesterScope: 'Backlog & Re-exam Sheets',
-  },
-];
-
 export const SAMPLE_FORM_DOCUMENT = {
   id: '',
   fileName: '',
