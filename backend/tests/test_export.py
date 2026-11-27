@@ -14,6 +14,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.db.auth import require_user
 from app.db.database import get_db
 from app.main import app
 from app.services.export import generate_form_pdf
@@ -107,13 +108,11 @@ async def _override_get_db():
 
 
 @pytest_asyncio.fixture
-async def client():
-    app.dependency_overrides[get_db] = _override_get_db
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            yield ac
-    finally:
-        app.dependency_overrides.pop(get_db, None)
+async def client(monkeypatch):
+    monkeypatch.setitem(app.dependency_overrides, require_user, uuid.uuid4)
+    monkeypatch.setitem(app.dependency_overrides, get_db, _override_get_db)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
 
 
 def test_generate_form_pdf_returns_valid_pdf_bytes():

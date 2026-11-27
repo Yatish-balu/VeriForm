@@ -11,11 +11,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.auth import require_user
 from app.db.database import get_db
 from app.db import service as svc
 from app.models.schemas import BranchSummaryOut, RoomSummaryOut
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_user)])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -26,9 +27,9 @@ async def room_summary(room_no: str, db: AsyncSession = Depends(get_db)):
     """
     Room-wise attendance summary.
 
-    Returns per-session breakdown (total / present / absent / % + student lists)
-    for all finalized (or at least uploaded) forms for the given room.
+    Returns counts, student lists, and verification status for each paper.
     """
+    room_no = room_no.strip().upper()
     sessions = await svc.get_room_summary(db, room_no)
     if not sessions:
         raise HTTPException(
@@ -49,10 +50,11 @@ async def branch_summary(branch: str, db: AsyncSession = Depends(get_db)):
     Groups student attendance data across all rooms by branch code
     (derived from USN, e.g. 'CY', 'CS', 'IS').
     """
-    sessions = await svc.get_branch_summary(db, branch.upper())
+    branch = branch.strip().upper()
+    sessions = await svc.get_branch_summary(db, branch)
     if not sessions:
         raise HTTPException(
             status_code=404,
-            detail=f"No attendance data found for branch '{branch.upper()}'.",
+            detail=f"No attendance data found for branch '{branch}'.",
         )
-    return BranchSummaryOut(branch=branch.upper(), sessions=sessions)
+    return BranchSummaryOut(branch=branch, sessions=sessions)

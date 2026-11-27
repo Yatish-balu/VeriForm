@@ -105,7 +105,7 @@ class Attendance(Base):
     form    = relationship("Form",    back_populates="attendance")
     session = relationship("Session", back_populates="attendance")
     student = relationship("Student", back_populates="attendance")
-    doubt   = relationship("Doubt",   back_populates="attendance", uselist=False)
+    doubts  = relationship("Doubt",   back_populates="attendance")
 
     def __repr__(self) -> str:
         return f"<Attendance student={self.student_id} session={self.session_id} status={self.status}>"
@@ -128,7 +128,7 @@ class Doubt(Base):
     created_at      = Column(DateTime(timezone=True), server_default=func.now())
 
     form        = relationship("Form",       back_populates="doubts")
-    attendance  = relationship("Attendance", back_populates="doubt")
+    attendance  = relationship("Attendance", back_populates="doubts")
 
     def __repr__(self) -> str:
         return f"<Doubt type={self.type} resolved={self.resolved}>"
