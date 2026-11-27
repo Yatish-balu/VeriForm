@@ -26,7 +26,7 @@ const PAGE_TITLES = {
 function WorkspaceShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, authMode, signOut } = useAuth();
+  const { user, loading: authLoading, authMode, signOut } = useAuth();
 
   const [activeWorkspace, setActiveWorkspace] = useState(WORKSPACES[0]);
   const [documentData, setDocumentData] = useState(null);
@@ -44,6 +44,7 @@ function WorkspaceShell() {
   });
 
   useEffect(() => {
+    if (!user) return;
     checkBackendHealth().then((status) => {
       setBackendStatus(status);
       if (status.connected) {
@@ -59,7 +60,22 @@ function WorkspaceShell() {
           .catch(() => {});
       }
     });
-  }, []);
+  }, [user]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#F7F7F5] flex items-center justify-center px-4">
+        <div className="flex items-center gap-2.5 text-[13.5px] font-medium text-[#64748B]">
+          <span className="w-4 h-4 border-2 border-[#293F2D] border-t-transparent rounded-full animate-spin" />
+          <span>Loading session…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
 
   const openDoubtsCount = doubts.filter((d) => !d.resolved).length;
   const pageTitle = PAGE_TITLES[location.pathname] || 'Upload B-Form';

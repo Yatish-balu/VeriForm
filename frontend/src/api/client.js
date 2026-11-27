@@ -13,11 +13,28 @@ apiClient.interceptors.request.use(async (config) => {
     const { data } = await supabase.auth.getSession();
     const token = data?.session?.access_token;
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      if (config.headers && typeof config.headers.set === 'function') {
+        config.headers.set('Authorization', `Bearer ${token}`);
+      } else {
+        config.headers = config.headers || {};
+        config.headers.Authorization = `Bearer ${token}`;
+      }
     }
   }
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) {
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 async function getCurrentUserId() {
   if (isSupabaseConfigured && supabase) {
@@ -91,6 +108,12 @@ export async function checkBackendHealth() {
 export async function extractFormAttendance({ file, documentData }) {
   if (!(file instanceof File)) {
     throw new Error('Please upload a JPG, PNG, or PDF Form-B file to run live extraction.');
+  }
+  if (isSupabaseConfigured && supabase) {
+    const { data } = await supabase.auth.getSession();
+    if (!data?.session?.access_token) {
+      throw new Error('Your session has expired or you are not logged in. Please sign in to verify attendance.');
+    }
   }
   try {
     const formData = new FormData();
