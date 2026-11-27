@@ -7,12 +7,13 @@ Author: Bhanuprasad
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime, timezone
+import re
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -67,6 +68,10 @@ async def get_form(db: AsyncSession, form_id: UUID) -> Optional[Form]:
     return result.scalar_one_or_none()
 
 
+async def form_exists(db: AsyncSession, form_id: UUID) -> bool:
+    return await db.scalar(select(Form.id).where(Form.id == form_id)) is not None
+
+
 async def list_forms(
     db: AsyncSession,
     uploaded_by: Optional[UUID] = None,
@@ -82,7 +87,7 @@ async def list_forms(
         Form.exam_name,
         Form.status,
         Form.created_at,
-        func.count(Doubt.id).filter(Doubt.resolved == False).label("open_doubts"),  # noqa: E712
+        func.count(Doubt.id).filter(Doubt.resolved.is_(False)).label("open_doubts"),
     ).outerjoin(Doubt, Doubt.form_id == Form.id).group_by(Form.id)
 
     if uploaded_by:
@@ -90,7 +95,7 @@ async def list_forms(
     if status:
         stmt = stmt.where(Form.status == status)
 
-    stmt = stmt.order_by(Form.created_at.desc())
+    stmt = stmt.order_by(Form.created_at.desc(), Form.id)
     result = await db.execute(stmt)
     return [row._asdict() for row in result.all()]
 
@@ -104,10 +109,8 @@ async def set_form_status(db: AsyncSession, form_id: UUID, status: str) -> Optio
 
 
 async def set_form_image_url(db: AsyncSession, form_id: UUID, image_url: str) -> None:
-    """Attach a storage URL to an existing form."""
-    await db.execute(
-        update(Form).where(Form.id == form_id).values(image_url=image_url)
-    )
+    """Store the private object key for a form's image."""
+    await db.execute(update(Form).where(Form.id == form_id).values(image_url=image_url))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -139,18 +142,9 @@ async def get_sessions(db: AsyncSession, form_id: UUID) -> List[Session]:
 # ══════════════════════════════════════════════════════════════
 
 def _extract_branch(usn: str) -> str:
-    """
-    Derive branch from USN.
-    Example: '1DS23CY037' → 'CY', '1DS22CS010' → 'CS'
-    Convention: characters at index 5-6 after the batch digits.
-    """
-    try:
-        # Pattern: 1DS<2-digit-year><BRANCH><roll>
-        # e.g.    1 D S 2 3 C Y 0 3 7
-        #         0 1 2 3 4 5 6 7 8 9
-        return usn[5:7].upper()
-    except IndexError:
-        return "UNKNOWN"
+    """Derive the branch from a USN such as '1DS23CY037'."""
+    match = re.fullmatch(r"[0-9][A-Z]{2}[0-9]{2}([A-Z]{2})[0-9]{3}", usn.upper())
+    return match[1] if match else "UNKNOWN"
 
 
 async def save_or_get_student(
@@ -164,19 +158,16 @@ async def save_or_get_student(
     If the student already exists, return the existing row.
     Branch is auto-derived from the USN if not provided.
     """
-    result = await db.execute(select(Student).where(Student.usn == usn))
-    existing = result.scalar_one_or_none()
-    if existing:
-        return existing
-
-    student = Student(
-        usn=usn,
-        name=name,
-        branch=branch or _extract_branch(usn),
+    stmt = (
+        insert(Student)
+        .values(usn=usn, name=name, branch=branch or _extract_branch(usn))
+        .on_conflict_do_nothing(index_elements=[Student.usn])
+        .returning(Student)
     )
-    db.add(student)
-    await db.flush()
-    return student
+    student = (await db.execute(stmt)).scalar_one_or_none()
+    if student is not None:
+        return student
+    return (await db.execute(select(Student).where(Student.usn == usn))).scalar_one()
 
 
 async def get_student_by_usn(db: AsyncSession, usn: str) -> Optional[Student]:
@@ -292,30 +283,71 @@ async def get_doubts(
     stmt = select(Doubt).where(Doubt.form_id == form_id)
     if resolved is not None:
         stmt = stmt.where(Doubt.resolved == resolved)
-    stmt = stmt.order_by(Doubt.created_at.asc())
+    stmt = stmt.order_by(Doubt.created_at.asc(), Doubt.id)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+class ReviewConflict(Exception):
+    pass
+
+
+class InvalidResolution(Exception):
+    pass
 
 
 async def resolve_doubt(
     db: AsyncSession,
     doubt_id: UUID,
     resolution: str,
+    *,
+    resolved_by: UUID,
+    attendance_status: Optional[str] = None,
 ) -> Optional[Doubt]:
-    """Mark a doubt as resolved with the reviewer's decision."""
-    await db.execute(
-        update(Doubt)
+    """Save the review decision and any attendance correction in one transaction."""
+    form = await db.scalar(
+        select(Form).join(Doubt, Doubt.form_id == Form.id)
         .where(Doubt.id == doubt_id)
-        .values(resolved=True, resolution=resolution)
+        .with_for_update(of=Form)
     )
-    result = await db.execute(select(Doubt).where(Doubt.id == doubt_id))
-    return result.scalar_one_or_none()
+    if form is None:
+        return None
+
+    doubt = await db.get(Doubt, doubt_id)
+    if doubt is None:
+        return None
+    attendance = await db.get(Attendance, doubt.attendance_id) if doubt.attendance_id else None
+    if attendance is not None and attendance.form_id != form.id:
+        raise InvalidResolution("This doubt references an attendance cell from another form.")
+    if attendance_status and attendance is None:
+        raise InvalidResolution("This doubt has no attendance cell to update.")
+    if attendance is not None and not attendance_status and resolution in ("present", "absent"):
+        attendance_status = resolution
+
+    if doubt.resolved:
+        if doubt.resolution == resolution and (
+            attendance_status is None or attendance.status == attendance_status
+        ):
+            return doubt
+        if attendance is None or attendance.status != "unclear" or attendance_status is None:
+            raise ReviewConflict("This doubt has already been resolved.")
+    if form.status != "needs_review":
+        raise ReviewConflict("Only forms awaiting review can be edited.")
+    if attendance is not None and attendance.status == "unclear" and attendance_status is None:
+        raise InvalidResolution("Choose present or absent for the unclear attendance cell.")
+
+    if attendance_status:
+        await update_attendance_status(db, attendance.id, attendance_status, resolved_by)
+    doubt.resolved = True
+    doubt.resolution = resolution
+    await db.flush()
+    return doubt
 
 
 async def count_open_doubts(db: AsyncSession, form_id: UUID) -> int:
     result = await db.execute(
         select(func.count(Doubt.id))
-        .where(Doubt.form_id == form_id, Doubt.resolved == False)  # noqa: E712
+        .where(Doubt.form_id == form_id, Doubt.resolved.is_(False))
     )
     return result.scalar_one()
 
@@ -330,9 +362,25 @@ async def finalize_form(db: AsyncSession, form_id: UUID) -> tuple[bool, str, Opt
     Blocked if there are any unresolved doubts.
     Returns (success, message, updated_form).
     """
+    form = await db.get(Form, form_id, with_for_update=True)
+    if form is None:
+        return False, "Form not found.", None
+    if form.status == "final":
+        return True, "Form already finalized.", await get_form(db, form_id)
+    if form.status == "processing":
+        return False, "Cannot finalize a form that is still processing.", form
+
     open_count = await count_open_doubts(db, form_id)
     if open_count > 0:
-        return False, f"Cannot finalize: {open_count} open doubt(s) must be resolved first.", None
+        return False, f"Cannot finalize: {open_count} open doubt(s) must be resolved first.", form
+
+    unclear = await db.scalar(
+        select(Attendance.id)
+        .where(Attendance.form_id == form_id, Attendance.status == "unclear")
+        .limit(1)
+    )
+    if unclear is not None:
+        return False, "Cannot finalize while an attendance cell is still unclear.", form
 
     form = await set_form_status(db, form_id, "final")
     return True, "Form finalized successfully.", form
@@ -342,106 +390,117 @@ async def finalize_form(db: AsyncSession, form_id: UUID) -> tuple[bool, str, Opt
 # SUMMARIES
 # ══════════════════════════════════════════════════════════════
 
-async def get_room_summary(db: AsyncSession, room_no: str) -> List[Dict]:
-    """
-    Returns per-session attendance stats for a room.
-    Result: [ { session_id, exam_date, subject_code, total, present, absent, unclear,
-                percentage, present_students: [...], absent_students: [...] } ]
-    """
-    # Fetch all final forms for this room
-    forms_result = await db.execute(
-        select(Form.id).where(Form.room_no == room_no, Form.status == "final")
-    )
-    form_ids = [row[0] for row in forms_result.all()]
-    if not form_ids:
-        # Also include needs_review forms so the user can at least see partial data
-        forms_result = await db.execute(
-            select(Form.id).where(Form.room_no == room_no)
+def _current_sessions(room_no: Optional[str] = None):
+    """Pick one source per room and paper, preferring a verified upload."""
+    room = func.upper(func.trim(Form.room_no))
+    ranked = (
+        select(
+            Session.id.label("session_id"),
+            Form.status.label("form_status"),
+            func.row_number().over(
+                partition_by=(room, Session.exam_date, func.upper(func.trim(Session.subject_code))),
+                order_by=(
+                    case((Form.status == "final", 0), else_=1),
+                    Form.created_at.desc(),
+                    Form.id,
+                    Session.id,
+                ),
+            ).label("source_rank"),
         )
-        form_ids = [row[0] for row in forms_result.all()]
-
-    if not form_ids:
-        return []
-
-    sessions_result = await db.execute(
-        select(Session).where(Session.form_id.in_(form_ids))
+        .join(Form, Form.id == Session.form_id)
+        .where(Form.status.in_(("final", "needs_review")))
     )
-    sessions = sessions_result.scalars().all()
+    if room_no is not None:
+        ranked = ranked.where(room == room_no.strip().upper())
+    sources = ranked.subquery()
+    return (
+        select(sources.c.session_id, sources.c.form_status)
+        .where(sources.c.source_rank == 1)
+        .subquery()
+    )
+
+
+def _percentage(present: int, total: int) -> float:
+    return round(present / total * 100, 2) if total else 0.0
+
+
+async def get_room_summary(db: AsyncSession, room_no: str) -> List[Dict]:
+    """Return attendance and verification status for each paper in a room."""
+    sources = _current_sessions(room_no)
+    result = await db.execute(
+        select(Session, sources.c.form_status)
+        .join(sources, sources.c.session_id == Session.id)
+        .options(selectinload(Session.attendance).selectinload(Attendance.student))
+        .order_by(Session.exam_date, Session.subject_code, Session.id)
+    )
 
     summary = []
-    for session in sessions:
-        att_result = await db.execute(
-            select(Attendance)
-            .where(Attendance.session_id == session.id)
-            .options(selectinload(Attendance.student))
-        )
-        rows = att_result.scalars().all()
-
-        total   = len(rows)
-        present = [r for r in rows if r.status == "present"]
-        absent  = [r for r in rows if r.status == "absent"]
-        unclear = [r for r in rows if r.status == "unclear"]
-        pct     = round(len(present) / total * 100, 2) if total else 0.0
-
+    for session, form_status in result:
+        rows = sorted(session.attendance, key=lambda row: (row.sl_no is None, row.sl_no, row.student.usn))
+        present = [r.student for r in rows if r.status == "present"]
+        absent = [r.student for r in rows if r.status == "absent"]
         summary.append({
-            "session_id":   session.id,
-            "exam_date":    session.exam_date,
+            "session_id": session.id,
+            "form_id": session.form_id,
+            "exam_date": session.exam_date,
             "subject_code": session.subject_code,
-            "total":        total,
-            "present":      len(present),
-            "absent":       len(absent),
-            "unclear":      len(unclear),
-            "percentage":   pct,
-            "present_students": [r.student for r in present],
-            "absent_students":  [r.student for r in absent],
+            "total": len(rows),
+            "present": len(present),
+            "absent": len(absent),
+            "unclear": len(rows) - len(present) - len(absent),
+            "verified": form_status == "final",
+            "percentage": _percentage(len(present), len(rows)),
+            "present_students": present,
+            "absent_students": absent,
         })
     return summary
 
 
 async def get_branch_summary(db: AsyncSession, branch: str) -> List[Dict]:
-    """
-    Returns per-session attendance stats for a branch across all rooms.
-    Branch is matched against the students.branch column.
-    """
-    student_ids_result = await db.execute(
-        select(Student.id).where(Student.branch == branch.upper())
+    """Aggregate a branch's attendance by paper across rooms."""
+    sources = _current_sessions()
+    subject_code = func.upper(func.trim(Session.subject_code))
+    result = await db.execute(
+        select(
+            Session.id,
+            Session.exam_date,
+            subject_code,
+            sources.c.form_status,
+            func.count(Attendance.id),
+            func.count(Attendance.id).filter(Attendance.status == "present"),
+            func.count(Attendance.id).filter(Attendance.status == "absent"),
+        )
+        .join(sources, sources.c.session_id == Session.id)
+        .join(Attendance, Attendance.session_id == Session.id)
+        .join(Student, Student.id == Attendance.student_id)
+        .where(Student.branch == branch.strip().upper())
+        .group_by(Session.id, Session.exam_date, subject_code, sources.c.form_status)
+        .order_by(Session.exam_date, subject_code, Session.id)
     )
-    student_ids = [row[0] for row in student_ids_result.all()]
-    if not student_ids:
-        return []
 
-    att_result = await db.execute(
-        select(Attendance)
-        .where(Attendance.student_id.in_(student_ids))
-        .options(selectinload(Attendance.session))
-    )
-    rows = att_result.scalars().all()
-
-    # Group by session
-    grouped: Dict[UUID, List[Attendance]] = {}
-    for r in rows:
-        grouped.setdefault(r.session_id, []).append(r)
-
-    summary = []
-    for session_id, att_rows in grouped.items():
-        session = att_rows[0].session
-        total   = len(att_rows)
-        present = sum(1 for r in att_rows if r.status == "present")
-        absent  = sum(1 for r in att_rows if r.status == "absent")
-        pct     = round(present / total * 100, 2) if total else 0.0
-
-        summary.append({
-            "session_id":   session_id,
-            "exam_date":    session.exam_date,
-            "subject_code": session.subject_code,
-            "total":        total,
-            "present":      present,
-            "absent":       absent,
-            "percentage":   pct,
+    papers: Dict[tuple[date, str], Dict] = {}
+    for session_id, exam_date, code, form_status, total, present, absent in result:
+        paper = papers.setdefault((exam_date, code), {
+            "session_id": session_id,
+            "session_ids": [],
+            "exam_date": exam_date,
+            "subject_code": code,
+            "total": 0,
+            "present": 0,
+            "absent": 0,
+            "unclear": 0,
+            "verified": True,
         })
+        paper["session_ids"].append(session_id)
+        paper["total"] += total
+        paper["present"] += present
+        paper["absent"] += absent
+        paper["unclear"] += total - present - absent
+        paper["verified"] = paper["verified"] and form_status == "final"
 
-    summary.sort(key=lambda x: x["exam_date"])
-    return summary
+    for paper in papers.values():
+        paper["percentage"] = _percentage(paper["present"], paper["total"])
+    return list(papers.values())
 
 
 # ══════════════════════════════════════════════════════════════

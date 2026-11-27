@@ -6,6 +6,8 @@
 > `status` literals: `"processing"` | `"needs_review"` | `"final"`  
 > `attendance` status literals: `"present"` | `"absent"` | `"unclear"`
 
+Send the signed-in user's Supabase access token as `Authorization: Bearer <access_token>` for endpoints 1–8. These endpoints return `401` when the token is missing or invalid.
+
 ---
 
 ## Table of Contents
@@ -121,7 +123,7 @@ Upload a B-form scan. The server runs Gemini Vision extraction, persists all dat
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `file` | binary | ✅ | JPG / PNG / PDF, max 20 MB |
-| `uploaded_by` | UUID (form field) | ❌ | Auth user UUID |
+| `uploaded_by` | UUID (form field) | ❌ | Defaults to the signed-in user. If supplied, it must match the token. |
 
 **Response `201 Created`** — `FormDetailOut`
 
@@ -132,7 +134,7 @@ Upload a B-form scan. The server runs Gemini Vision extraction, persists all dat
   "exam_name":          "5th Sem CIE-1",
   "semester":           "5",
   "department":         "Chemistry",
-  "image_url":          "https://xyz.supabase.co/storage/v1/object/public/bforms/101_1732651200.jpg",
+  "image_url":          "https://xyz.supabase.co/storage/v1/object/sign/bforms/forms/form-uuid.jpg?token=example",
   "footer_present_raw": "42",
   "footer_absent_raw":  "8",
   "status":             "needs_review",
@@ -181,10 +183,12 @@ Upload a B-form scan. The server runs Gemini Vision extraction, persists all dat
 
 | Status | Condition |
 |--------|-----------|
-| `400` | Unsupported MIME type |
+| `400` | Unsupported file type or contents that do not match the MIME type |
+| `403` | Uploader UUID differs from the signed-in user |
 | `413` | File exceeds 20 MB |
-| `422` | Pydantic validation failure |
-| `500` | Gemini extraction error |
+| `422` | Unreadable or inconsistent Form-B data |
+| `502` | Extraction service error |
+| `503` | Extraction or private storage is unavailable |
 
 ---
 
@@ -192,7 +196,7 @@ Upload a B-form scan. The server runs Gemini Vision extraction, persists all dat
 
 List all uploaded forms with a count of still-open doubts.
 
-**Query params** — none
+**Query params** — optional `status=processing`, `status=needs_review`, or `status=final`.
 
 **Response `200 OK`** — `List[FormListItem]`
 
@@ -226,6 +230,7 @@ List all uploaded forms with a count of still-open doubts.
 ### 3 · `GET /api/forms/{id}`
 
 Full form detail including all sessions, attendance rows (with nested student), and doubts.
+The signed `image_url` expires after one hour. Fetch the form detail again for a fresh link.
 
 **Path params**
 
@@ -304,7 +309,8 @@ Human reviewer submits a decision for one doubt. Updates the linked attendance r
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `resolution` | string | ✅ | `"present"`, `"absent"`, or a custom note |
-| `resolved_by` | UUID | ✅ | Auth user UUID |
+| `resolved_by` | UUID | ❌ | Defaults to the signed-in reviewer. If supplied, it must match the token. |
+| `attendance_status` | `"present"` or `"absent"` | ❌ | Apply this attendance correction alongside a review note. Supply a status when resolving an unclear cell. |
 
 **Response `200 OK`** — `DoubtOut`
 
@@ -326,15 +332,16 @@ Human reviewer submits a decision for one doubt. Updates the linked attendance r
 
 | Status | Condition |
 |--------|-----------|
+| `403` | Reviewer UUID differs from the signed-in user |
 | `404` | Doubt not found |
-| `409` | Doubt already resolved |
-| `422` | Missing required fields |
+| `409` | The doubt already has a different resolution or its form is closed for review |
+| `422` | Invalid review input or an unclear cell still needs a decision |
 
 ---
 
 ### 6 · `POST /api/forms/{id}/finalize`
 
-Lock the form (`status → "final"`). Blocked if any doubts remain unresolved.
+Lock the form (`status → "final"`) after every doubt is resolved and each attendance cell is clear. Retrying finalization returns the current final form.
 
 **Path params**
 
@@ -344,7 +351,7 @@ Lock the form (`status → "final"`). Blocked if any doubts remain unresolved.
 
 **Request Body** — none
 
-**Response `200 OK`** — `FormOut`
+**Response `200 OK`** — `FormDetailOut`
 
 ```json
 {
@@ -358,7 +365,10 @@ Lock the form (`status → "final"`). Blocked if any doubts remain unresolved.
   "footer_absent_raw":  "8",
   "status":             "final",
   "uploaded_by":        "user-uuid",
-  "created_at":         "2025-11-27T00:00:00Z"
+  "created_at":         "2025-11-27T00:00:00Z",
+  "sessions":           [],
+  "attendance":        [],
+  "doubts":            []
 }
 ```
 
@@ -367,14 +377,13 @@ Lock the form (`status → "final"`). Blocked if any doubts remain unresolved.
 | Status | Condition |
 |--------|-----------|
 | `404` | Form not found |
-| `409` | Unresolved doubts remain — body includes `open_doubts: N` |
-| `422` | Form already finalized |
+| `409` | The form is processing, has open doubts, or still has unclear attendance |
 
 ---
 
 ### 7 · `GET /api/summary/room/{room_no}`
 
-Room-wise attendance breakdown across all finalized forms for a room. Returns one entry per exam session.
+Returns one entry per exam date and subject in a room. Each entry uses the latest finalized upload for that paper if available. Otherwise it uses the latest upload awaiting review with `verified: false`. The percentage is present divided by all attendance rows, including unclear rows.
 
 **Path params**
 
@@ -392,12 +401,14 @@ Room-wise attendance breakdown across all finalized forms for a room. Returns on
   "sessions": [
     {
       "session_id":   "sess-uuid",
+      "form_id":      "form-uuid",
       "exam_date":    "2025-11-10",
       "subject_code": "21CY51",
       "total":        50,
       "present":      42,
       "absent":        8,
       "unclear":       0,
+      "verified":      true,
       "percentage":   84.0,
       "present_students": [
         { "id": "stu-uuid", "usn": "1MS21CY001", "name": "Anil Kumar", "branch": "CY" }
@@ -420,7 +431,7 @@ Room-wise attendance breakdown across all finalized forms for a room. Returns on
 
 ### 8 · `GET /api/summary/branch/{branch}`
 
-Branch-wise attendance summary (grouped by USN prefix, e.g. `CY`, `CS`, `IS`). No per-student lists — counts only.
+Returns counts by branch, exam date, and subject across rooms. `session_ids` lists the room sessions included in the aggregate, with `session_id` identifying the first. `verified` is true when every contributing room session is finalized.
 
 **Path params**
 
@@ -438,11 +449,14 @@ Branch-wise attendance summary (grouped by USN prefix, e.g. `CY`, `CS`, `IS`). N
   "sessions": [
     {
       "session_id":   "sess-uuid",
+      "session_ids":  ["sess-uuid", "other-sess-uuid"],
       "exam_date":    "2025-11-10",
       "subject_code": "21CY51",
       "total":        120,
       "present":      105,
       "absent":        15,
+      "unclear":       0,
+      "verified":      true,
       "percentage":   87.5
     }
   ]
